@@ -39,6 +39,7 @@ See `SPEC.md` for the exact on-disk format, data model, and layer contracts.
 See `LEARNINGS.md` for the rationale behind every major decision.  
 See `AGENTS.md` if an AI is helping with future changes.  
 See `ROADMAP.md` for what is deliberately out of scope right now.
+See `ELI5.md` for explainations of the pwm password manager project using progressive complexity.
 
 ## Quick Start (once v1 is complete)
 
@@ -116,8 +117,5 @@ Personal / educational use. Do not use this in production for high-value account
 5. Keep the vault file out of git.
 
 ---
-
-**Project location (while experimental)**: `projects/password-manager`  
-Only move to a more permanent home (with remote) once it has proven itself useful and the core is solid.
 
 README updated 2026-06-14 after full E2E testing + automated test suite passing. v1 is now complete and documented at multiple levels of detail.
