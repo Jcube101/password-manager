@@ -6,6 +6,48 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-08-16 — Windows launcher breaks after the repo is moved
+
+User added the README profile wrapper (`pwm.exe`) and got:
+
+```
+Fatal error in launcher: Unable to create process using
+'"C:\Users\jobjo\projects\password-manager\.venv\Scripts\python.exe"
+"C:\Users\jobjo\Github\password-manager\.venv\Scripts\pwm.exe"'
+```
+
+Root cause: this repo used to live at `C:\Users\jobjo\projects\password-manager` and was moved to `Github\password-manager` with the `.venv` copied along. Two things were still baked to the old path:
+
+1. **`pwm.exe`** (setuptools/distlib Windows console-script stub) embeds the absolute path to `python.exe` at `pip install` time. It is not a real relocatable binary.
+2. **`__editable__.pwm-0.1.0.pth`** pointed at `C:\Users\jobjo\projects\password-manager\src`. So even `python -m pwm` failed with `No module named pwm`. `pip show pwm` reported `Editable project location: C:\Users\jobjo\projects\password-manager`. `pyvenv.cfg` still recorded `command = ... -m venv C:\Users\jobjo\projects\password-manager\.venv`.
+
+The interpreter itself (`Github\...\python.exe`) ran fine. Only the stubs and the editable map were stale.
+
+Fix applied: re-ran `python.exe -m pip install -e ".[dev]"` against the *current* interpreter. That rewrote the launcher and the `.pth` to `C:\Users\jobjo\Github\password-manager`. Both `pwm.exe --help` and `python -m pwm --help` then worked.
+
+Docs change: README now recommends the profile wrapper call `python.exe -m pwm`, not `pwm.exe`, and explains that a moved venv should be recreated (or at least reinstalled) rather than copied.
+
+Teaching point: Windows venvs are not portable. Console-script `.exe` files and editable `.pth` files are absolute-path snapshots.
+
+---
+
+## 2026-08-16 — Day-to-day usage documented in README
+
+User asked how to actually *live* with `pwm` after v1 shipped. README was still install-first ("once v1 is complete") with a stale clone path (`projects\password-manager`) and a guessed vault location (`%APPDATA%\pwm\vault`).
+
+What we added / fixed (docs only, no code):
+
+- Practical daily-use guide: mental model (unlock → one job → process exits), PowerShell profile wrapper so `pwm` works from any directory without activating the venv, cheat sheet, a "typical week" walkthrough, habits, explicit non-goals, multi-vault via `--vault-path`.
+- Vault location is now "run `pwm info`" instead of hardcoding a path. `platformdirs.user_data_dir("pwm")` on Windows defaults to Local (not Roaming) and, because `appauthor` is omitted, often nests as `...\pwm\pwm\vault`. Guessing `%APPDATA%\pwm\vault` was wrong; `info` is the contract with the user.
+- Documented the two real daily-use friction points honestly:
+  1. Master is typed on every vault command (by design; no session/keyring in v1).
+  2. `pwm edit --password` puts the new secret in shell history. `add` can hide/generate; `edit` cannot yet. Called out as a v1 UX gap rather than silently changing SPEC.
+- Also called out clipboard history (`Win+V`) and "don't pass `--password` on `add`".
+
+No SPEC change. If we later add a hidden password prompt on `edit` (or `--generate` on `edit`), that would be a small, user-facing contract extension and should go through SPEC first.
+
+---
+
 ## 2026-06-14 — Project Kickoff & Architecture Baseline
 
 - **CLI command name**: `pwm` (user preference stated explicitly).
