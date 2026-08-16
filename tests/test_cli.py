@@ -11,6 +11,7 @@ Run with: pytest tests/test_cli.py -q
 from typer.testing import CliRunner
 
 from pwm.cli import app
+from pwm.vault import Vault
 
 runner = CliRunner()
 
@@ -63,3 +64,40 @@ def test_copy_and_delete_help_dual():
         result = runner.invoke(app, [cmd, "--help"])
         assert result.exit_code == 0
         assert "--label" in result.stdout or "-l" in result.stdout
+
+
+def test_bare_pwm_no_vault_shows_landing(tmp_path):
+    dummy = tmp_path / "no-such-vault"
+    result = runner.invoke(app, ["--vault-path", str(dummy)])
+    assert result.exit_code == 0
+    out = result.stdout.lower()
+    assert "no vault" in out
+    assert "pwm init" in out
+    # Path may wrap inside a Rich panel; the leaf name must still appear.
+    assert dummy.name in result.stdout
+    assert "master password" not in out
+
+
+def test_bare_pwm_with_vault_shows_path_and_next_commands(tmp_path):
+    vault_file = tmp_path / "vault"
+    Vault(vault_file).create("test-master-for-landing-page")
+    result = runner.invoke(app, ["--vault-path", str(vault_file)])
+    assert result.exit_code == 0
+    out = result.stdout.lower()
+    assert vault_file.name in result.stdout
+    assert "back up" in out
+    assert "pwm copy" in out
+    assert "pwm add" in out
+    assert "pwm list" in out
+    assert "pwm search" in out
+    assert "master password" not in out
+    # Header-only: no decrypted inventory
+    assert "no entries" not in out
+
+
+def test_bare_pwm_does_not_replace_help():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "Usage" in result.stdout
+    assert "init" in result.stdout
+    assert "copy" in result.stdout

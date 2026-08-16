@@ -89,8 +89,18 @@ Items required to ship a useful, secure, educational v1 CLI are being executed n
 - Always re-evaluate security impact. Many of these (keyring, TOTP, import) increase surface area.
 - Keep the "educational first" spirit: each new feature should come with clear explanations in code comments and LEARNINGS.md.
 
-Current as of 2026-06-14 (post full E2E + 28/28 tests passing). v1 core is complete. Most items below remain valid for post-v1 work. See `ELI5.md` for approachable overviews and `LEARNINGS.md` for what was actually built and tested in v1.
+Current as of 2026-08-16. v1 core is complete. PWM-R009 (bare-`pwm` landing page) was written here, then pulled into active work and shipped the same day — see "Recently shipped" below. 31 automated tests passing.
 
 ---
 
 **v1 Status Note**: The dual `--label`/`-l` + positional support, the full CLI surface, crypto roundtrips under real master changes, atomic writes, and Rich output were all validated in an interactive Windows E2E session plus automated tests. See the E2E transcript in the chat history and the top of `LEARNINGS.md`.
+
+---
+
+## Recently shipped
+
+### PWM-R009: Bare-`pwm` landing page (shipped 2026-08-16)
+- Ticket lived in Post-v1 above, then moved here after implementation (SPEC §7.0).
+- `pwm` with no subcommand prints a header-only landing page: path, format, Argon2 params, backup reminder, four daily commands.
+- No master prompt, no decrypt, no labels, no entry count. Not a TUI (PWM-R101 still deferred).
+- Details and the CliRunner-vs-module-level-Console gotcha: `LEARNINGS.md`.

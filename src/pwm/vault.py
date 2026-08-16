@@ -288,7 +288,7 @@ class Vault:
     def inspect_header(self) -> dict:
         """Read header information without unlocking (safe to call on locked vault)."""
         if not self.exists():
-            return {"exists": False}
+            return {"exists": False, "path": str(self.vault_path)}
         blob = self.vault_path.read_bytes()
         info = get_header_info(blob)
         info["path"] = str(self.vault_path)

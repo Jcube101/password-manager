@@ -6,6 +6,54 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-08-16 — Google Drive as G: for backups
+
+User asked whether backing up to Google Drive (mapped as `G:`) is a problem because it is connected to the cloud.
+
+Answer we documented: **copies yes, live vault no.**
+
+- The vault is already Argon2id + AES-GCM. Uploading a dated copy to `G:\pwm-backups\` gives Google the ciphertext, not the plaintext. That is the same class of trade-off as any cloud-hosted password manager, except this prototype has not had a security review and the master is the entire remaining secret.
+- Pointing `--vault-path` at `G:` for daily use is a different, worse idea: Drive can snapshot mid-write, invent conflict copies, lock files, and upload every mutation.
+- Date-stamped filenames avoid Drive's "conflicted copy" mess. Folder must not be shared. Master must not live in a Doc beside it. Stream/online-only files need to finish downloading before a restore is trustworthy.
+- A USB copy is still the cleaner offline spare; Drive is a convenient second copy.
+
+No code change. README "How to back up" now has an explicit `G:` subsection and the table no longer lumps all cloud into one vague "trade-off" cell.
+
+---
+
+## 2026-08-16 — "Back up this file" needed actual steps
+
+The landing page (and `init`) tell the user to back up the vault, but neither the command nor the README showed a copy-paste way to do it. User asked "How do I do that?" after seeing the line.
+
+Added a README section "How to back up": `Copy-Item` of the header-only path, what *not* to copy (`vault.tmp`, git), destination trade-offs (same disk / USB / cloud), restore via overwrite or `--vault-path`, and the change-master vs old-backup rule.
+
+Did **not** implement `pwm backup` (PWM-R007). The user asked how, not for a new command. The whole-file story is simple enough that a helper would mostly date-stamp a copy — still valid later, not required to answer the question.
+
+---
+
+## 2026-08-16 — PWM-R009: bare-`pwm` landing page
+
+User asked whether pwm should have a "home screen." We agreed: no stay-open TUI (that remains PWM-R101), but yes a header-only landing page when `pwm` is invoked with no subcommand.
+
+Ticket written into ROADMAP first (PWM-R009), then SPEC §7.0, then implemented and pulled out of future work.
+
+**What it does**
+- No master prompt. No decrypt. No labels. No entry count.
+- No vault → first-run panel pointing at `pwm init` and the configured path.
+- Vault exists → path, format, Argon2 params, backup reminder, four daily commands.
+- Salt/nonce/ciphertext length stay on `pwm info`. `--help` / `--version` unchanged.
+
+**Implementation notes**
+- Hooked in the existing `@app.callback(invoke_without_command=True)` when `ctx.invoked_subcommand is None`.
+- Reuses `Vault.inspect_header()`. Missing-vault result now also includes `path` so callers do not have to special-case it.
+- First draft used the module-level `Console()` to print a `Panel`. CliRunner captured a single ellipsized line (no newlines, path gone). Switched to `rprint(Panel(...))` so output binds to the current stdout — same pattern as the rest of the CLI. Teaching point: a process-global Rich `Console` created at import time does not see Typer's redirected stdout.
+
+**Tests**: 3 new CliRunner cases (no vault, existing vault, `--help` still the command list). Suite is 31.
+
+No crypto change. No data-model change.
+
+---
+
 ## 2026-08-16 — Windows launcher breaks after the repo is moved
 
 User added the README profile wrapper (`pwm.exe`) and got:

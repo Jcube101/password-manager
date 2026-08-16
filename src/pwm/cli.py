@@ -17,6 +17,7 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 from rich import print as rprint
 
@@ -115,6 +116,52 @@ def main(
 
     # Store the chosen path on the context so commands can retrieve it
     ctx.obj = {"vault_path": vault_path}
+
+    if ctx.invoked_subcommand is None:
+        # Bare `pwm` — header-only landing page. Never prompts, never decrypts.
+        _show_home(ctx)
+        raise typer.Exit()
+
+
+def _show_home(ctx: typer.Context) -> None:
+    """Print the no-unlock landing page for a bare `pwm` invocation.
+
+    This is deliberately *not* a TUI and not a decrypted dashboard.
+    Labels and entry counts stay hidden until a command unlocks the vault.
+    """
+    v = _get_vault_from_ctx(ctx)
+    header = v.inspect_header()
+    path = header.get("path") or str(v.vault_path)
+
+    if not header.get("exists"):
+        body = (
+            f"[bold]pwm[/bold] {__version__} — local-first password manager\n\n"
+            "[yellow]No vault yet.[/yellow]\n"
+            f"It will be created at:\n  [bold]{path}[/bold]\n\n"
+            "Get started:  [bold]pwm init[/bold]"
+        )
+        # rprint (not the module-level Console) so CliRunner and redirected
+        # stdout see the real lines. A process-global Console created at import
+        # time misses Typer's capture and collapses this to one ellipsized line.
+        rprint(Panel(body, title="pwm", border_style="cyan"))
+        return
+
+    body = (
+        f"[bold]pwm[/bold] {__version__} — local-first password manager\n\n"
+        f"Vault:   [bold]{path}[/bold]\n"
+        f"Format:  {header.get('magic')} v{header.get('format_version')}   "
+        f"Argon2id t={header.get('time_cost')} "
+        f"m={header.get('memory_cost')} KiB p={header.get('parallelism')}\n\n"
+        "[yellow]Back up this file.[/yellow] It is the only copy of your data.\n\n"
+        "[bold]Next[/bold]\n"
+        "  pwm copy <label>                 copy a password\n"
+        "  pwm add --label NAME --generate  store a new one\n"
+        "  pwm list                         browse (passwords hidden)\n"
+        "  pwm search <query>               find an entry\n\n"
+        "  pwm --help                       all commands\n"
+        "  pwm info                         vault header details"
+    )
+    rprint(Panel(body, title="pwm", border_style="green"))
 
 
 def _get_vault_from_ctx(ctx: typer.Context) -> Vault:

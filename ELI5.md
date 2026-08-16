@@ -40,6 +40,7 @@ You only have to remember **one strong master password**. Everything else is loc
 ### What you can do with it
 
 ```powershell
+pwm                         # Landing page: where the box is + what to type next
 pwm init                    # Create the locked box (first time only)
 pwm generate --length 20    # Make a strong random password
 pwm add --label "Gmail" --username "you@gmail.com" --generate --tag email

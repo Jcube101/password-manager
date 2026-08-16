@@ -5,7 +5,7 @@ Quick, auditable, educational password manager that stores everything in a singl
 **Status**: v1 complete and tested.
 
 - Full E2E interactive run on Windows (init → add/generate in both label styles → list/search/get/copy/edit/delete → change-master) succeeded.
-- All 28 automated tests pass (`pytest -q`).
+- All 31 automated tests pass (`pytest -q`).
 - Dual label interface (`pwm copy Gmail` or `pwm copy --label Gmail`) is fully supported.
 
 See `ELI5.md` for explanations at 5 levels of complexity (kid → expert).  
@@ -19,6 +19,8 @@ The project is intentionally educational first: small, auditable, conservative c
 `pwm` is a **command-line locker**, not a browser extension.
 
 You remember **one master password**. Every other secret lives in one encrypted file on this computer. When you need a password, you open a terminal, unlock the vault (type the master), and copy the entry you want. There is no tray icon, no auto-fill, no cloud sync, and no "stay logged in." That is the point: the process unlocks, does one job, and exits.
+
+Run `pwm` with no arguments for a landing page (vault path, backup reminder, next commands). It does **not** ask for the master and does **not** list your entries.
 
 Typical rhythm:
 
@@ -52,7 +54,7 @@ Then confirm where the file actually landed:
 pwm info
 ```
 
-That path is the source of truth. On Windows it is usually under your local user-data directory (often `%LOCALAPPDATA%\pwm\...`). Copy that file somewhere safe (USB, encrypted backup, another disk). **It is the only copy of your data.**
+That path is the source of truth. On Windows it is usually under your local user-data directory (often `%LOCALAPPDATA%\pwm\pwm\vault`). **It is the only copy of your data.** See [How to back up](#how-to-back-up).
 
 ## Make `pwm` available in every terminal
 
@@ -107,7 +109,8 @@ Every command that reads or writes secrets will prompt `Master password:` and sh
 | Change a stored password | `pwm generate` then `pwm edit Gmail --password "..."` (see warning below) |
 | Delete an entry | `pwm delete OldForum` (asks to confirm) or `pwm delete OldForum --yes` |
 | Change the master password | `pwm change-master` |
-| Where is my vault? | `pwm info` |
+| Landing page (path + next commands, no unlock) | `pwm` |
+| Where is my vault? (header details) | `pwm info` |
 | Just make a password, do not store it | `pwm generate --length 24` |
 | Make one and copy it | `pwm generate --length 24 --copy` |
 
@@ -161,7 +164,76 @@ pwm delete "OldForum"
 pwm info          # confirm the file you are about to back up
 ```
 
-Copy the vault file shown by `pwm info` to your backup location. You can copy that file while `pwm` is not running; it is already encrypted.
+## How to back up
+
+There is no cloud and no `pwm backup` command in v1. Backup means **copy the vault file** to somewhere that is not this disk.
+
+1. Confirm the path (`pwm` or `pwm info`). On this machine it is:
+
+   `C:\Users\jobjo\AppData\Local\pwm\pwm\vault`
+
+2. Copy **that file only**. It has no extension. Ignore `vault.tmp` if you ever see one — that is an in-progress write.
+
+```powershell
+# USB stick, second drive, encrypted container — pick a destination you control
+$src  = "$env:LOCALAPPDATA\pwm\pwm\vault"
+$dest = "D:\Backups\pwm-vault-$(Get-Date -Format 'yyyy-MM-dd')"
+Copy-Item $src $dest
+Get-Item $dest   # sanity check: size should match the original
+```
+
+Or in File Explorer: paste `%LOCALAPPDATA%\pwm\pwm` into the address bar, copy `vault`, paste it onto the other disk. Rename the copy with the date so you can tell backups apart.
+
+The file is **already encrypted**. A thief who gets the copy still needs your master password. The copy is only as safe as where you put it.
+
+| Destination | Fine? | Why |
+|---|---|---|
+| USB stick / external disk you keep | Yes | Simple, offline, you hold it |
+| Another folder on the **same** PC | Weak | Disk death or ransomware takes both |
+| Encrypted disk image (BitLocker To Go, VeraCrypt) | Yes | Extra layer if the stick is lost |
+| Google Drive / OneDrive **as a backup folder** (this machine: `G:\My Drive\Miscellaneous\Password Manager\Backups`) | Acceptable trade-off | Ciphertext leaves your machine. Google cannot read it without the master. See below. |
+| Live vault on `G:` (`pwm --vault-path G:\...`) | **No** | Sync mid-write, conflict copies, file locking, every save uploaded |
+| This git repo | **Never** | `.gitignore` already blocks `vault*` for a reason |
+
+### Google Drive as `G:`
+
+A dedicated folder is a reasonable place for **copies**, not for the live vault. On this machine that folder is:
+
+`G:\My Drive\Miscellaneous\Password Manager\Backups`
+
+What you are actually doing: Google Drive for Desktop uploads that file to your Google account. The bytes on `G:` and the bytes in the cloud are the same encrypted blob `pwm` already wrote. Argon2id + AES-GCM still apply. Google (or anyone who later gets into that Google account) has the ciphertext, not the passwords — unless the master is weak enough to brute-force offline.
+
+Rules if you use it:
+
+- Keep the **working** vault where it is (`%LOCALAPPDATA%\pwm\pwm\vault`). Only copy snapshots to `G:`.
+- Keep that folder **not shared** with anyone. Do not put the master password in a Doc next to it.
+- Date-stamp each copy instead of overwriting one file (Drive conflict copies are messy).
+- Prefer a long passphrase. Cloud backup makes a stolen-file attack more realistic; the KDF is what makes that attack expensive.
+
+```powershell
+$src  = "$env:LOCALAPPDATA\pwm\pwm\vault"
+$dest = "G:\My Drive\Miscellaneous\Password Manager\Backups\pwm-vault-$(Get-Date -Format 'yyyy-MM-dd')"
+Copy-Item -LiteralPath $src -Destination $dest
+Get-Item -LiteralPath $dest
+```
+
+Spaces in `My Drive` and `Password Manager` are why the path is quoted and why `-LiteralPath` is used (so PowerShell does not treat any character as a wildcard).
+
+If Drive is in stream / online-only mode, wait until the file shows as available locally before you treat the backup as done. Restore with `pwm --vault-path "G:\My Drive\Miscellaneous\Password Manager\Backups\pwm-vault-YYYY-MM-DD" list` (or copy it back to the AppData path first).
+
+A USB stick you control is still the cleaner offline backup. Drive is the convenient second copy.
+
+**When:** after `pwm init`, after adding anything you would hate to retype, and after every `pwm change-master`.
+
+**Restore:** copy the backup back over the live file (close any `pwm` command first), or open it in place:
+
+```powershell
+pwm --vault-path "G:\My Drive\Miscellaneous\Password Manager\Backups\pwm-vault-2026-08-16" list
+```
+
+Old backups unlock with the master that was current **when that copy was made**. After `change-master`, keep the new backup and destroy or re-encrypt the old ones.
+
+A future `pwm backup` helper is `PWM-R007` on the roadmap. Until then, `Copy-Item` is the whole story.
 
 ## Habits that actually matter
 
@@ -217,6 +289,7 @@ Typical flow:
 ## Current Feature List (v1 target)
 
 - Strong customizable password generator
+- Bare `pwm` landing page (header only — no master prompt)
 - Add / list / search / get / copy / edit / delete entries
 - Labels, username, url, notes, tags
 - Master password change (full re-encryption)
@@ -250,4 +323,4 @@ Personal / educational use. Do not use this in production for high-value account
 
 ---
 
-README updated 2026-08-16: day-to-day usage guide, plus a corrected PowerShell wrapper (`python -m pwm` instead of `pwm.exe`) after a moved-venv launcher failure.
+README updated 2026-08-16: day-to-day usage guide, Windows profile wrapper (`python -m pwm`), and bare-`pwm` landing page (PWM-R009).

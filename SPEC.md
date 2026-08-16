@@ -250,6 +250,15 @@ Global options (available on most commands):
 - `--vault-path PATH` : override the default user-data vault location (useful for testing).
 - `--help` : standard.
 
+### 7.0 `pwm` (no subcommand) — landing page
+- Invoking `pwm` with no subcommand prints a short Rich landing page and exits 0.
+- Must **not** prompt for the master password.
+- Must **not** decrypt the vault, list labels, or show an entry count.
+- If no vault exists at the configured path: a first-run message that points at `pwm init` and prints that path.
+- If a vault exists: path, format version, Argon2 parameters, a backup reminder, and the four daily commands (`copy`, `add --generate`, `list`, `search`).
+- This is header-only (same `inspect_header()` surface as `info`). Salt, nonce, and ciphertext length stay on `pwm info`.
+- `pwm --help` remains the full command list. `--vault-path` applies.
+
 ### 7.1 `pwm init`
 - If vault already exists: error "Vault already initialized."
 - Prompts twice for master password (hidden).
@@ -393,4 +402,5 @@ All crypto tests must be runnable without a real TTY.
 
 This SPEC is the single source of truth for v1 implementation. When the build is complete, the final state of the code + tests must be consistent with (or an explicitly documented extension of) this document.
 
-Initial version: 2026-06-14
+Initial version: 2026-06-14  
+Updated 2026-08-16: added §7.0 landing page for bare `pwm` (PWM-R009). No crypto or data-model change.
