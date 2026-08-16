@@ -11,6 +11,7 @@ Run with `pwm` after `pip install -e .`
 from __future__ import annotations
 
 import getpass
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -22,7 +23,7 @@ from rich.table import Table
 from rich import print as rprint
 
 from . import __version__
-from .vault import Vault, get_default_vault_path
+from .vault import Vault, get_default_backup_dir, get_default_vault_path
 from .generator import generate_password
 from .clipboard import copy_to_clipboard
 from .crypto import VaultDecryptionError
@@ -152,7 +153,8 @@ def _show_home(ctx: typer.Context) -> None:
         f"Format:  {header.get('magic')} v{header.get('format_version')}   "
         f"Argon2id t={header.get('time_cost')} "
         f"m={header.get('memory_cost')} KiB p={header.get('parallelism')}\n\n"
-        "[yellow]Back up this file.[/yellow] It is the only copy of your data.\n\n"
+        "[yellow]Back up this file.[/yellow] It is the only copy of your data.\n"
+        "  pwm backup\n\n"
         "[bold]Next[/bold]\n"
         "  pwm copy <label>                 copy a password\n"
         "  pwm add --label NAME --generate  store a new one\n"
@@ -193,6 +195,12 @@ def init(ctx: typer.Context):
     path = v.vault_path
     rprint(f"[green]Vault created successfully at[/green] {path}")
     rprint("[bold yellow]IMPORTANT:[/bold yellow] Back up this file regularly. It is the only copy of your data.")
+    rprint(
+        "[bold yellow]ALSO:[/bold yellow] The master password is never stored. "
+        "If you forget it, this file is a brick — Drive copies included. "
+        "Write the passphrase on paper and keep it somewhere physical. "
+        "Do not put it in a cloud folder next to the backup."
+    )
 
 
 @app.command()
@@ -535,6 +543,48 @@ def change_master(ctx: typer.Context):
 
     rprint("[green]Master password changed successfully.[/green]")
     rprint("[yellow]All entries have been re-encrypted under the new master.[/yellow]")
+
+
+@app.command()
+def backup(
+    ctx: typer.Context,
+    dest: Optional[Path] = typer.Option(
+        None,
+        "--dest",
+        "-d",
+        help=(
+            "Directory for the dated copy. Defaults to PWM_BACKUP_DIR, "
+            "or ~/pwm-backups if that env var is unset."
+        ),
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=False,
+    ),
+):
+    """Copy the encrypted vault to a dated file. Does not unlock. Does not need the master."""
+    v = _get_vault_from_ctx(ctx)
+    _require_vault_exists(v)
+
+    dest_dir = dest if dest is not None else get_default_backup_dir()
+    try:
+        written = v.backup(dest_dir)
+    except (OSError, ValueError) as e:
+        rprint(f"[red]Backup failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    rprint(f"[green]Backed up to[/green] [bold]{written}[/bold]")
+    rprint("[dim]This is a copy of the encrypted file. It still needs your master password.[/dim]")
+
+    try:
+        same_drive = written.resolve().drive == v.vault_path.resolve().drive
+    except Exception:
+        same_drive = False
+    if same_drive and dest is None and not os.environ.get("PWM_BACKUP_DIR"):
+        rprint(
+            "[yellow]That default folder is on the same machine as the live vault. "
+            "A disk failure can take both. Set PWM_BACKUP_DIR or pass --dest "
+            "(for example your Google Drive backups folder).[/yellow]"
+        )
 
 
 @app.command()

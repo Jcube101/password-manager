@@ -263,7 +263,7 @@ Global options (available on most commands):
 - If vault already exists: error "Vault already initialized."
 - Prompts twice for master password (hidden).
 - Creates empty vault with the master.
-- Prints success + location of the vault file (for backup awareness).
+- Prints success + location of the vault file (for backup awareness) and a reminder that the master is never stored.
 
 Alternative: implicit init on first `pwm add` is also acceptable if clearly documented.
 
@@ -324,7 +324,19 @@ Behavior:
 - Re-encrypts the entire vault under the new master + fresh salt/nonce.
 - On any failure during the process the old vault must remain intact (atomic write helps here).
 
-### 7.11 General CLI Rules
+### 7.11 `pwm backup`
+- Copies the **encrypted** vault file. Must **not** prompt for the master, decrypt, or write plaintext.
+- Destination directory resolution, first match wins:
+  1. `--dest` / `-d`
+  2. Environment variable `PWM_BACKUP_DIR`
+  3. `~/pwm-backups` (created if missing)
+- Output file name: `pwm-vault-YYYY-MM-DD-HHMMSS` (local time). If that name exists, append `-1`, `-2`, …
+- Write via a sibling `.tmp` then `os.replace` (same atomicity rule as the live vault).
+- If no vault exists: same "No vault found" error as other commands.
+- On success: print the destination path and remind the user the copy still needs the master.
+- Optional GPG signing is **out of scope** (roadmap stretch, not this contract).
+
+### 7.12 General CLI Rules
 - Every command that needs decrypted data prompts for the master password using `getpass.getpass("Master password: ")` unless the vault is already unlocked in this process (rare in CLI).
 - Use Rich `Console` for all output.
 - Use a Rich `Progress` / spinner while deriving the key (Argon2 is deliberately slow).
@@ -349,7 +361,7 @@ Behavior:
 - Derived key objects are deleted and garbage collected after use where practical (`del key; gc.collect()`).
 - No plaintext of entries or master ever written to disk except inside the correctly formatted encrypted vault.
 - Clipboard usage is documented with its limitations (see LEARNINGS.md).
-- On first use or `init`, the tool should print a short "backup your vault file" reminder.
+- On first use or `init`, the tool should print a short "backup your vault file" reminder **and** that the master password is unrecoverable (write it on paper; a file copy is not enough).
 - The tool must continue to function if the user moves the vault file (via `--vault-path`).
 
 ---
@@ -403,4 +415,5 @@ All crypto tests must be runnable without a real TTY.
 This SPEC is the single source of truth for v1 implementation. When the build is complete, the final state of the code + tests must be consistent with (or an explicitly documented extension of) this document.
 
 Initial version: 2026-06-14  
-Updated 2026-08-16: added §7.0 landing page for bare `pwm` (PWM-R009). No crypto or data-model change.
+Updated 2026-08-16: added §7.0 landing page for bare `pwm` (PWM-R009).  
+Updated 2026-08-16: added §7.11 `pwm backup` (PWM-R007). Copies ciphertext only; no decrypt.

@@ -17,7 +17,9 @@ from __future__ import annotations
 import gc
 import json
 import os
+import shutil
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,12 +37,25 @@ from .models import Entry, now_iso
 
 DEFAULT_APP_NAME = "pwm"
 DEFAULT_VAULT_FILENAME = "vault"
+BACKUP_DIR_ENV = "PWM_BACKUP_DIR"
 
 
 def get_default_vault_path() -> Path:
     """Return the platform-correct location for the vault file."""
     data_dir = platformdirs.user_data_dir(DEFAULT_APP_NAME)
     return Path(data_dir) / DEFAULT_VAULT_FILENAME
+
+
+def get_default_backup_dir() -> Path:
+    """Directory for dated vault copies.
+
+    ``PWM_BACKUP_DIR`` wins so a PowerShell profile can point at a Drive
+    folder without hard-coding that path in the tool. Otherwise ``~/pwm-backups``.
+    """
+    override = os.environ.get(BACKUP_DIR_ENV)
+    if override:
+        return Path(override)
+    return Path.home() / "pwm-backups"
 
 
 class Vault:
@@ -294,3 +309,36 @@ class Vault:
         info["path"] = str(self.vault_path)
         info["exists"] = True
         return info
+
+    def backup(self, dest_dir: Path | str | None = None) -> Path:
+        """Copy the *encrypted* vault file to dest_dir. Does not decrypt.
+
+        The copy is named ``pwm-vault-YYYY-MM-DD-HHMMSS``. A sibling ``.tmp``
+        is written first, then ``os.replace``, so a crash cannot leave a
+        half-copied backup as the final name.
+        """
+        if not self.exists():
+            raise FileNotFoundError(f"No vault at {self.vault_path}")
+
+        dest_dir = Path(dest_dir) if dest_dir is not None else get_default_backup_dir()
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+        dest = dest_dir / f"pwm-vault-{stamp}"
+        n = 1
+        while dest.exists():
+            dest = dest_dir / f"pwm-vault-{stamp}-{n}"
+            n += 1
+
+        if dest.resolve() == self.vault_path.resolve():
+            raise ValueError("Backup destination is the live vault file.")
+
+        tmp = dest.with_name(dest.name + ".tmp")
+        try:
+            shutil.copy2(self.vault_path, tmp)
+            os.replace(tmp, dest)
+        except Exception:
+            if tmp.exists():
+                tmp.unlink()
+            raise
+        return dest

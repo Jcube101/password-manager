@@ -5,7 +5,7 @@ Quick, auditable, educational password manager that stores everything in a singl
 **Status**: v1 complete and tested.
 
 - Full E2E interactive run on Windows (init → add/generate in both label styles → list/search/get/copy/edit/delete → change-master) succeeded.
-- All 31 automated tests pass (`pytest -q`).
+- All 35 automated tests pass (`pytest -q`).
 - Dual label interface (`pwm copy Gmail` or `pwm copy --label Gmail`) is fully supported.
 
 See `ELI5.md` for explanations at 5 levels of complexity (kid → expert).  
@@ -46,7 +46,7 @@ pip install -e ".[dev]"
 pwm init
 ```
 
-Pick a **long master passphrase you can actually type**, not a cute 8-character password. Something like a silly sentence only you know. If you forget it, the vault is gone. There is no reset, no email, no recovery code.
+Pick a **long master passphrase you can actually type**, not a cute 8-character password. Something like a silly sentence only you know. Write it on paper *before* you run `init`, then store that paper in a drawer or safe. If you forget it, the vault is gone. There is no reset, no email, no recovery code. A copy of the vault file on `G:` does not help. See [If you forgot the master](#if-you-forgot-the-master).
 
 Then confirm where the file actually landed:
 
@@ -110,6 +110,7 @@ Every command that reads or writes secrets will prompt `Master password:` and sh
 | Delete an entry | `pwm delete OldForum` (asks to confirm) or `pwm delete OldForum --yes` |
 | Change the master password | `pwm change-master` |
 | Landing page (path + next commands, no unlock) | `pwm` |
+| Back up the encrypted vault | `pwm backup` |
 | Where is my vault? (header details) | `pwm info` |
 | Just make a password, do not store it | `pwm generate --length 24` |
 | Make one and copy it | `pwm generate --length 24 --copy` |
@@ -166,23 +167,29 @@ pwm info          # confirm the file you are about to back up
 
 ## How to back up
 
-There is no cloud and no `pwm backup` command in v1. Backup means **copy the vault file** to somewhere that is not this disk.
-
-1. Confirm the path (`pwm` or `pwm info`). On this machine it is:
-
-   `C:\Users\jobjo\AppData\Local\pwm\pwm\vault`
-
-2. Copy **that file only**. It has no extension. Ignore `vault.tmp` if you ever see one — that is an in-progress write.
-
 ```powershell
-# USB stick, second drive, encrypted container — pick a destination you control
-$src  = "$env:LOCALAPPDATA\pwm\pwm\vault"
-$dest = "D:\Backups\pwm-vault-$(Get-Date -Format 'yyyy-MM-dd')"
-Copy-Item $src $dest
-Get-Item $dest   # sanity check: size should match the original
+pwm backup --dest "G:\My Drive\Miscellaneous\Password Manager\Backups"
 ```
 
-Or in File Explorer: paste `%LOCALAPPDATA%\pwm\pwm` into the address bar, copy `vault`, paste it onto the other disk. Rename the copy with the date so you can tell backups apart.
+That copies the **encrypted** vault to a dated file (`pwm-vault-YYYY-MM-DD-HHMMSS`). It does not ask for the master and it does not decrypt. Ignore `vault.tmp` if you ever see one — that is an in-progress write.
+
+To make it just `pwm backup`, add this next to the `pwm` function in your PowerShell profile (`notepad $PROFILE`):
+
+```powershell
+$env:PWM_BACKUP_DIR = "G:\My Drive\Miscellaneous\Password Manager\Backups"
+```
+
+Then `. $PROFILE`. After that, `pwm backup` always writes to that folder.
+
+`pwm backup` with no `--dest` and no env var uses `~\pwm-backups` (same machine as the live vault — a weak spare, not a real backup).
+
+**A backup folder is not a backup.** After the 2026-08-16 reset, this machine had:
+
+- Live new vault only at `%LOCALAPPDATA%\pwm\pwm\vault` (120 bytes).
+- A parked old vault next to it (`vault.unreadable-2026-08-16`, 596 bytes) — same disk, forgotten master.
+- One file on `G:` named `pwm-vault-2026-08-16` that is **that old 596-byte brick**, not the new vault.
+
+Until you run `pwm backup --dest "G:\My Drive\Miscellaneous\Password Manager\Backups"` and see a **new** `pwm-vault-YYYY-MM-DD-HHMMSS` whose size matches the live file (today, ~120 bytes), you have **local only**. Confirm with `Get-ChildItem` on the Drive folder and compare `Length` + `LastWriteTime` to `pwm info`.
 
 The file is **already encrypted**. A thief who gets the copy still needs your master password. The copy is only as safe as where you put it.
 
@@ -211,15 +218,10 @@ Rules if you use it:
 - Prefer a long passphrase. Cloud backup makes a stolen-file attack more realistic; the KDF is what makes that attack expensive.
 
 ```powershell
-$src  = "$env:LOCALAPPDATA\pwm\pwm\vault"
-$dest = "G:\My Drive\Miscellaneous\Password Manager\Backups\pwm-vault-$(Get-Date -Format 'yyyy-MM-dd')"
-Copy-Item -LiteralPath $src -Destination $dest
-Get-Item -LiteralPath $dest
+pwm backup --dest "G:\My Drive\Miscellaneous\Password Manager\Backups"
 ```
 
-Spaces in `My Drive` and `Password Manager` are why the path is quoted and why `-LiteralPath` is used (so PowerShell does not treat any character as a wildcard).
-
-If Drive is in stream / online-only mode, wait until the file shows as available locally before you treat the backup as done. Restore with `pwm --vault-path "G:\My Drive\Miscellaneous\Password Manager\Backups\pwm-vault-YYYY-MM-DD" list` (or copy it back to the AppData path first).
+If Drive is in stream / online-only mode, wait until the new `pwm-vault-...` file shows as available locally before you treat the backup as done. Restore with `pwm --vault-path "G:\My Drive\Miscellaneous\Password Manager\Backups\pwm-vault-YYYY-MM-DD-HHMMSS" list` (or copy it back to the AppData path first).
 
 A USB stick you control is still the cleaner offline backup. Drive is the convenient second copy.
 
@@ -228,12 +230,30 @@ A USB stick you control is still the cleaner offline backup. Drive is the conven
 **Restore:** copy the backup back over the live file (close any `pwm` command first), or open it in place:
 
 ```powershell
-pwm --vault-path "G:\My Drive\Miscellaneous\Password Manager\Backups\pwm-vault-2026-08-16" list
+pwm --vault-path "G:\My Drive\Miscellaneous\Password Manager\Backups\pwm-vault-2026-08-16-153045" list
 ```
 
 Old backups unlock with the master that was current **when that copy was made**. After `change-master`, keep the new backup and destroy or re-encrypt the old ones.
 
-A future `pwm backup` helper is `PWM-R007` on the roadmap. Until then, `Copy-Item` is the whole story.
+## If you forgot the master
+
+There is no recovery. The master is never stored. Drive backups of the vault are the same lock. `pwm change-master` needs the current master first.
+
+This happened on this machine (2026-08-16). The old file was **renamed**, not deleted:
+
+`C:\Users\jobjo\AppData\Local\pwm\pwm\vault.unreadable-2026-08-16`
+
+If the phrase comes back, you can open that file with `pwm --vault-path ...\vault.unreadable-2026-08-16 list`. If it does not, treat every password that lived only in that vault as lost and reset those accounts on each site.
+
+To start a **new** empty vault (only after you have given up):
+
+```powershell
+# if a live vault still exists, park it first — do not delete
+Move-Item "$env:LOCALAPPDATA\pwm\pwm\vault" "$env:LOCALAPPDATA\pwm\pwm\vault.unreadable-$(Get-Date -Format 'yyyy-MM-dd')"
+pwm init
+```
+
+Write the new passphrase on paper, then type it. Do not put it in `G:\My Drive\Miscellaneous\Password Manager\`.
 
 ## Habits that actually matter
 
@@ -290,6 +310,7 @@ Typical flow:
 
 - Strong customizable password generator
 - Bare `pwm` landing page (header only — no master prompt)
+- `pwm backup` — dated copy of the encrypted file (no unlock)
 - Add / list / search / get / copy / edit / delete entries
 - Labels, username, url, notes, tags
 - Master password change (full re-encryption)
@@ -323,4 +344,4 @@ Personal / educational use. Do not use this in production for high-value account
 
 ---
 
-README updated 2026-08-16: day-to-day usage guide, Windows profile wrapper (`python -m pwm`), and bare-`pwm` landing page (PWM-R009).
+README updated 2026-08-16: landing page, backup guide, and `pwm backup` (PWM-R007).

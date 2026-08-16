@@ -6,6 +6,71 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-08-16 — Local vs cloud: having a backup *folder* is not a backup
+
+After `pwm backup` shipped, the user asked whether they had a local copy, a cloud copy, or both. We listed the actual files instead of assuming.
+
+| Path | Size | Meaning |
+|---|---|---|
+| `%LOCALAPPDATA%\pwm\pwm\vault` | 120 B, 2026-08-16 | Live **new** vault. Only copy. |
+| `%LOCALAPPDATA%\pwm\pwm\vault.unreadable-2026-08-16` | 596 B, 2026-06-15 | Parked old vault. Same disk as live. Not a backup. |
+| `G:\My Drive\Miscellaneous\Password Manager\Backups\pwm-vault-2026-08-16` | 596 B, 2026-06-15 | Cloud copy of the **old** vault. Brick (forgotten master). |
+| `~/pwm-backups` | missing | `pwm backup` has not been run without `--dest`. |
+| `PWM_BACKUP_DIR` | unset | Profile not wired yet. |
+
+Lesson: a dedicated Drive folder plus an old dated file feels like "I have cloud backup." They did not. The new vault had never been copied. README now says how to tell (size + date of `pwm-vault-*` vs the live file) and that parked AppData files are not a second copy.
+
+No code change.
+
+---
+
+## 2026-08-16 — PWM-R007: `pwm backup`
+
+User created a new vault after losing the master and asked: "how do I back it up? Is there a simple command like pwm backup?" There was not. Copy-Item plus a long Drive path is not a daily habit.
+
+Pulled PWM-R007. SPEC §7.11. Implementation:
+
+- `Vault.backup(dest_dir)` copies bytes with `shutil.copy2` + sibling `.tmp` + `os.replace`. No unlock.
+- Name `pwm-vault-YYYY-MM-DD-HHMMSS` (and `-1` if that second already exists).
+- Dest order: `--dest` → `PWM_BACKUP_DIR` → `~/pwm-backups`.
+- CLI reminds that the copy still needs the master. Warns if they hit the same-machine default with no env var / no `--dest`.
+- Did **not** GPG-sign (roadmap stretch). Did **not** hard-code the user's `G:\My Drive\...` path into the tool — that belongs in the profile as `PWM_BACKUP_DIR`.
+
+Teaching point: a backup of an encrypted vault is just a file copy. The interesting part is making the destination sticky and never decrypting "to be helpful."
+
+35 tests.
+
+---
+
+## 2026-08-16 — Real user forgot the master password
+
+Not a hypothetical. After getting daily use working (profile wrapper, landing page, Drive backups), the user could not recall the master and chose to start over. They asked to log it as a lesson. They are not stupid; this is the primary real-world failure mode of a local-only vault with no recovery.
+
+**What the design did (correctly)**
+- Master is never stored. Drive copies of `vault` are the same lock. `change-master` needs the old master. There is no reset path. The file without the phrase is a brick. That is the security model, not a bug.
+- Live vault at `%LOCALAPPDATA%\pwm\pwm\vault` (596 bytes, last write 2026-06-15) was **renamed**, not deleted: `vault.unreadable-2026-08-16`. Slim chance if the phrase comes back. Google Drive dated copies of that same ciphertext stay as they are.
+
+**What the product got wrong in the messaging**
+- We nagged hard about **backing up the file** ("it is the only copy of your data") and barely about **remembering or writing down the master**. Those are two different bricks. The user did the file part (G: folder, Copy-Item, the whole conversation) and still lost access.
+- `pwm init` only said to back up the file. That is incomplete. A file backup without the master is a decorated paperweight.
+
+**What we will not do**
+- Add a reset / recovery code / email / security questions. That is a second way in.
+- Delete the old file "to be tidy."
+- Put the master in a Google Doc next to `G:\My Drive\Miscellaneous\Password Manager\Backups`.
+
+**What we will do**
+- Tell the truth in README: forgot master → move the file aside → `pwm init`. Reset site passwords out-of-band.
+- Strengthen the `init` success line: back up the file **and** write the master on paper in a physical place.
+- For a *new* master: a sentence they can actually type, written down *before* `pwm init`, then stored on paper (drawer / safe), not in the cloud folder.
+
+**Related roadmap, not a fix for this incident**
+- PWM-R001 (OS keyring) is the only feature that would have helped "I forgot, but I unlocked last week." It also means anyone on the unlocked Windows account can open the vault. That trade-off is now less abstract.
+
+No crypto change.
+
+---
+
 ## 2026-08-16 — Google Drive as G: for backups
 
 User asked whether backing up to Google Drive (mapped as `G:`) is a problem because it is connected to the cloud.

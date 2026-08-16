@@ -101,3 +101,26 @@ def test_bare_pwm_does_not_replace_help():
     assert "Usage" in result.stdout
     assert "init" in result.stdout
     assert "copy" in result.stdout
+    assert "backup" in result.stdout
+
+
+def test_backup_no_vault(tmp_path):
+    dummy = tmp_path / "no-such-vault"
+    result = runner.invoke(app, ["--vault-path", str(dummy), "backup", "--dest", str(tmp_path / "out")])
+    assert result.exit_code != 0
+    assert "No vault" in result.stdout
+
+
+def test_backup_writes_dated_copy_without_master(tmp_path):
+    vault_file = tmp_path / "vault"
+    dest = tmp_path / "backups"
+    Vault(vault_file).create("test-master-for-backup")
+    result = runner.invoke(
+        app, ["--vault-path", str(vault_file), "backup", "--dest", str(dest)]
+    )
+    assert result.exit_code == 0
+    assert "Backed up" in result.stdout
+    assert "master password" in result.stdout.lower()
+    copies = list(dest.glob("pwm-vault-*"))
+    assert len(copies) == 1
+    assert copies[0].read_bytes() == vault_file.read_bytes()

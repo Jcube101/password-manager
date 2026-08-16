@@ -42,6 +42,7 @@ You only have to remember **one strong master password**. Everything else is loc
 ```powershell
 pwm                         # Landing page: where the box is + what to type next
 pwm init                    # Create the locked box (first time only)
+pwm backup                  # Copy the locked box somewhere safe (still needs the master)
 pwm generate --length 20    # Make a strong random password
 pwm add --label "Gmail" --username "you@gmail.com" --generate --tag email
 pwm list                    # See all your entries (passwords hidden)

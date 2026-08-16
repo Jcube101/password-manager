@@ -112,3 +112,28 @@ def test_atomic_write_on_save(tmp_path: Path):
     v2 = Vault(vault_file)
     v2.unlock("m")
     assert v2.get("Label").password == "p"  # type: ignore[union-attr]
+
+
+def test_backup_copies_bytes_without_unlock(tmp_path: Path):
+    vault_file = tmp_path / "vault"
+    dest = tmp_path / "backups"
+    v = Vault(vault_file)
+    v.create("m")
+    v.add("Gmail", password="secret")
+    v.lock()
+
+    written = v.backup(dest)
+    assert written.parent == dest
+    assert written.name.startswith("pwm-vault-")
+    assert written.read_bytes() == vault_file.read_bytes()
+    assert not v.is_unlocked()
+
+    second = v.backup(dest)
+    assert second != written
+    assert second.exists()
+
+
+def test_backup_missing_vault_raises(tmp_path: Path):
+    v = Vault(tmp_path / "nope")
+    with pytest.raises(FileNotFoundError):
+        v.backup(tmp_path / "backups")

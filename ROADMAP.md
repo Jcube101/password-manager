@@ -58,10 +58,6 @@ Items required to ship a useful, secure, educational v1 CLI are being executed n
 - `pwm stats`: count of entries, duplicate passwords (warning only), password age (last updated), weak generator defaults used historically, etc.
 - Can be implemented purely after decrypt; no crypto changes.
 
-### PWM-R007: Encrypted backup helper
-- Command that creates a timestamped copy of the current `vault` file into a user-chosen backup location (or default `~/pwm-backups/`).
-- Optional: GPG-sign the backup if `gpg` is available (nice-to-have, not required).
-
 ### PWM-R008: Config file for defaults
 - Small plaintext `config.toml` or `config.json` next to the vault (or in the same user data dir) for:
   - Default Argon2 parameters (advanced users only — still override per-vault header).
@@ -89,7 +85,7 @@ Items required to ship a useful, secure, educational v1 CLI are being executed n
 - Always re-evaluate security impact. Many of these (keyring, TOTP, import) increase surface area.
 - Keep the "educational first" spirit: each new feature should come with clear explanations in code comments and LEARNINGS.md.
 
-Current as of 2026-08-16. v1 core is complete. PWM-R009 (bare-`pwm` landing page) was written here, then pulled into active work and shipped the same day — see "Recently shipped" below. 31 automated tests passing.
+Current as of 2026-08-16. v1 core is complete. PWM-R009 (landing page) and PWM-R007 (`pwm backup`) shipped — see "Recently shipped" below. 35 automated tests passing.
 
 ---
 
@@ -104,3 +100,8 @@ Current as of 2026-08-16. v1 core is complete. PWM-R009 (bare-`pwm` landing page
 - `pwm` with no subcommand prints a header-only landing page: path, format, Argon2 params, backup reminder, four daily commands.
 - No master prompt, no decrypt, no labels, no entry count. Not a TUI (PWM-R101 still deferred).
 - Details and the CliRunner-vs-module-level-Console gotcha: `LEARNINGS.md`.
+
+### PWM-R007: Encrypted backup helper (shipped 2026-08-16)
+- `pwm backup` / `pwm backup --dest DIR`. No master, no decrypt — copies the ciphertext to `pwm-vault-YYYY-MM-DD-HHMMSS`.
+- Dest: `--dest`, else `PWM_BACKUP_DIR`, else `~/pwm-backups`. GPG signing still not done (was a stretch).
+- Built after the user asked "is there a simple command like pwm backup?" while standing up a new vault.
