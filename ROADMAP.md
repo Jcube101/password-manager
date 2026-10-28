@@ -29,7 +29,7 @@ The direction for the next surface. The window is named **Signet**. The CLI comm
 
 - A desktop app: its own icon and window on this computer, same kind of program as Calculator. It reads the same vault file.
 - Daily unlock is the Windows Hello PIN. Hello holds a passkey on this machine. The PIN is how the user proves themselves to Hello. The app never learns the PIN. Fingerprint or face can stand in for the PIN when the laptop has them.
-- This PC is Windows 11 26H2 (build 26300), past the February 2026 update where Windows Hello can return a WebAuthn PRF / hmac-secret value after that check. That secret unwraps the vault key. A prompt that only asks "are you there?" and then unwraps a DPAPI blob is the weaker design in PWM-R001. It is not the unlock chosen for this window.
+- This PC is Windows 11 26H2 (build 26300), past the February 2026 update where Windows Hello can return a WebAuthn PRF / hmac-secret value. That secret unwraps the vault key. Tried on this PC on 2026-10-28: API version 9, a 32-byte output, the same salt matched across create and get, a second salt differed, and the temporary passkey was deleted. A prompt that only asks "are you there?" and then unwraps a DPAPI blob is the weaker design in PWM-R001. It is not the unlock chosen for this window.
 - First trust: the user types the master password once and opts in. Windows creates the passkey and asks for the PIN. After that, opening the app is the PIN.
 - The master password stays the other way in: a new computer, a Windows reinstall, or Hello / TPM failure. A Drive backup of the vault still opens with the master that was current when that copy was made. The PIN secret stays on this PC and does not travel with the file. The CLI keeps prompting for the master with `getpass`.
 - A Hello unlock lasts 24 hours. The clock starts at unlock and is not reset by clicks. Sleep, lid close, and the Windows lock do not end it. Windows may still ask for the laptop PIN to reach the desktop. Signet does not ask again during those 24 hours. Quitting Signet locks it early. Changed from 5 minutes on 2026-10-28 because typing the laptop PIN that often defeated the point of the window. A revealed secret still hides on sleep and on the Windows lock. The list comes back without Hello.
@@ -47,11 +47,11 @@ The direction for the next surface. The window is named **Signet**. The CLI comm
 **Written into SPEC.md §13**
 
 - The Hello-wrapped vault key lives in a sidecar file next to the vault, not in the vault header. The CLI keeps reading the vault exactly as it does now. If the sidecar is missing or Hello fails, Signet asks for the master password. The sidecar stays on this PC. Copying it to Drive does not unlock the vault on another computer, because the PRF secret stays inside Windows Hello. Fresh salt and nonce rules do not change.
-- PRF has to be tried on this machine before the ticket can be called done. The file encryption does not change. Hello only unwraps a key. No new cipher.
+- PRF was tried on this machine on 2026-10-28. Hello returned a stable 32-byte output, so that output can be the AES-GCM wrapping key directly. The file encryption does not change. Hello only unwraps a key. No new cipher.
 
 **Open**
 
-- Nothing the user still has to choose. Implementation has not started. PRF still has to be tried on this machine before the ticket can be called done.
+- Nothing the user still has to choose. The on-machine PRF check passed. The sidecar and the window are not written yet.
 
 **Related tickets, and what not to build instead**
 
@@ -164,7 +164,7 @@ The user wants to open this vault from their phone someday. The phone has a fing
 - Always re-evaluate security impact. Many of these (keyring, TOTP, import) increase surface area.
 - Keep the "educational first" spirit: each new feature should come with clear explanations in code comments and LEARNINGS.md.
 
-Current as of 2026-10-28. v1 core is complete. PWM-R009 (landing page) and PWM-R007 (`pwm backup`) shipped — see "Recently shipped" below. 35 automated tests passing. PWM-R110 is Signet. The contract is SPEC.md §13. Not implemented. The CLI command stays `pwm`. Daily unlock is the existing Windows Hello PIN, and one unlock lasts 24 hours. Signet will be started from the Start menu, not by typing `pwm`. PWM-R111 records a later phone client on the user's Pi. The network carries ciphertext only. It is not started.
+Current as of 2026-10-28. v1 core is complete. PWM-R009 (landing page) and PWM-R007 (`pwm backup`) shipped — see "Recently shipped" below. 35 automated tests passing. PWM-R110 is Signet. The contract is SPEC.md §13. Not implemented. The Hello PRF check passed on this PC on 2026-10-28. The CLI command stays `pwm`. Daily unlock is the existing Windows Hello PIN, and one unlock lasts 24 hours. Signet will be started from the Start menu, not by typing `pwm`. PWM-R111 records a later phone client on the user's Pi. The network carries ciphertext only. It is not started.
 
 ---
 

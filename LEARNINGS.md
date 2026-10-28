@@ -6,6 +6,24 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-10-28 — Windows Hello PRF works on this PC
+
+Called `webauthn.dll` directly. No browser, no port, and no vault file. WebAuthn API version 9. The platform authenticator is available.
+
+The probe created a temporary discoverable passkey (`signet-prf-probe.local`, display name "Signet PRF probe") with user verification required, `bEnablePrf`, and the `hmac-secret` extension. Make-credential options were version 8, which is the version that accepts `pPRFGlobalEval`. The raw-hmac flag (`WEBAUTHN_AUTHENTICATOR_HMAC_SECRET_VALUES_FLAG`) was left off, so Windows applied the WebAuthn PRF salt derivation itself: SHA-256 of `WebAuthn PRF`, a zero byte, then the salt.
+
+Hello returned a 32-byte value. It was not all zeros. The same salt produced the same value on create and on get-assertion. A second salt in that same assertion produced a different 32-byte value. Attestation version was 8 and `bPrfEnabled` was true. Get-assertion options were version 6 (`pHmacSecretSaltValues`). `WebAuthNDeletePlatformCredential` then removed the temporary passkey.
+
+Signet can use a 32-byte PRF output directly as the AES-GCM wrapping key. The HKDF branch in SPEC §13.2 stays for a non-32-byte output, which this PC did not produce. The sidecar salt is passed as a normal PRF salt. Setting the raw-hmac flag would skip the derivation this probe relied on, and the unwrap would not match.
+
+The credential was discoverable. This probe did not try a non-resident key. Windows has dropped `hmac-secret` in the past unless the credential is resident, so Signet keeps that requirement.
+
+ctypes note for the later Hello module: a `create_unicode_buffer` cannot be assigned straight to a `c_wchar_p` field. Cast it. Struct sizes were checked against Windows SDK 10.0.26100 `webauthn.h` and matched this DLL (make options 200 bytes, `bEnablePrf` at offset 96, `pPRFGlobalEval` at 128, assertion `pHmacSecret` at 112).
+
+No secret bytes were printed. No Signet application code yet.
+
+---
+
 ## 2026-10-28 — A later phone client must see ciphertext only (PWM-R111)
 
 The user may want the vault on their phone later. It would be a progressive web app served from their Raspberry Pi, behind Cloudflare Access, on a subdomain they already know how to protect. That is not Signet, and it is not a reason to change the vault format.

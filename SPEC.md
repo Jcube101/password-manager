@@ -511,4 +511,4 @@ The window toolkit is an implementation choice. It must stay on this computer an
 Initial version: 2026-06-14  
 Updated 2026-08-16: added §7.0 landing page for bare `pwm` (PWM-R009).  
 Updated 2026-08-16: added §7.11 `pwm backup` (PWM-R007). Copies ciphertext only; no decrypt.  
-Updated 2026-10-28: added §13 Signet. The window uses the existing Windows Hello PIN. A PIN change in Windows needs nothing inside Signet. One Hello unlock lasts 24 hours. Launch is a Start menu shortcut, not `pwm`. No code yet.
+Updated 2026-10-28: added §13 Signet. The window uses the existing Windows Hello PIN. A PIN change in Windows needs nothing inside Signet. One Hello unlock lasts 24 hours. Launch is a Start menu shortcut, not `pwm`. The same day, Windows Hello on this PC returned a stable 32-byte PRF output (WebAuthn API 9). No Signet code yet.
