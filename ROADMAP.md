@@ -21,7 +21,7 @@ Items required to ship a useful, secure, educational v1 CLI are being executed n
 
 The direction for the next surface. The window is named **Signet**. The CLI command stays `pwm`. The contract is SPEC.md §13, written 2026-10-28. No code yet. Mockups from that session live in `.superpowers/brainstorm/` (gitignored).
 
-**Paused here.** Behavior is agreed and written into the spec. Implementation has not started. The laptop PIN is the existing Windows Hello PIN, not a new or shorter PIN.
+**In progress.** The sidecar and a first window are written. The window is the list, Copy, and the side panel, and it unlocks with the existing Windows Hello PIN. Create, Edit, Delete, the 24-hour clock, and the Start menu shortcut are not built yet.
 
 **Why.** The v1 CLI works. Day to day it is hard to reach because it lives in a terminal, the master password is typed on every command, and there is no place to look at labels. Conversation on 2026-10-28 settled a second surface. The CLI stays. The vault file stays. The crypto stays Argon2id + AES-256-GCM. This is not a hosted website, not a browser extension, and not the TUI in PWM-R101.
 
@@ -51,7 +51,7 @@ The direction for the next surface. The window is named **Signet**. The CLI comm
 
 **Open**
 
-- Nothing the user still has to choose. The on-machine PRF check passed. The sidecar format is implemented and tested with a fake PRF output. The window is not written yet.
+- Nothing the user still has to choose. The on-machine PRF check passed. The sidecar format is implemented. A tkinter window shows the list, Copy, and the side panel. Create, Edit, Delete, the 24-hour clock, and the shortcut are not built yet.
 
 **Related tickets, and what not to build instead**
 
@@ -164,7 +164,7 @@ The user wants to open this vault from their phone someday. The phone has a fing
 - Always re-evaluate security impact. Many of these (keyring, TOTP, import) increase surface area.
 - Keep the "educational first" spirit: each new feature should come with clear explanations in code comments and LEARNINGS.md.
 
-Current as of 2026-10-28. v1 core is complete. PWM-R009 (landing page) and PWM-R007 (`pwm backup`) shipped — see "Recently shipped" below. 35 automated tests passing. PWM-R110 is Signet. The contract is SPEC.md §13. The sidecar format is implemented. The window is not. The Hello PRF check passed on this PC on 2026-10-28. The CLI command stays `pwm`. Daily unlock is the existing Windows Hello PIN, and one unlock lasts 24 hours. Signet will be started from the Start menu, not by typing `pwm`. PWM-R111 records a later phone client on the user's Pi. The network carries ciphertext only. It is not started.
+Current as of 2026-10-28. v1 core is complete. PWM-R009 (landing page) and PWM-R007 (`pwm backup`) shipped — see "Recently shipped" below. 49 automated tests passing. PWM-R110 is Signet. The contract is SPEC.md §13. The sidecar format is implemented. A tkinter window shows the list, Copy, and the side panel. Create, Edit, Delete, the 24-hour clock, and the shortcut are not built yet. The Hello PRF check passed on this PC on 2026-10-28. The CLI command stays `pwm`. Daily unlock is the existing Windows Hello PIN. Until the shortcut exists, start the window with `python -m pwm.signet`. PWM-R111 records a later phone client on the user's Pi. The network carries ciphertext only. It is not started.
 
 ---
 

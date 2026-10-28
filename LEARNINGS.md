@@ -6,6 +6,20 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-10-28 — Signet’s first window is tkinter
+
+The window toolkit is tkinter, which already ships with this Python. PySide6 is not installed, and adding it would be a large dependency for a window whose colors are a handful of hex values. Tkinter opens a normal window on this PC. It does not listen on a port and it does not open a browser.
+
+Launch, until the Start menu shortcut exists, is `python -m pwm.signet`. An optional `--vault-path` points at a different file. Typing `pwm` does not open the window.
+
+This slice is the list, Copy, and the side panel, plus the first Hello enrollment and later Hello unlocks. Create, Edit, Delete, and the 24-hour clock are not built. Closing the window drops the key. The key stays in memory across sleep and the Windows lock. A secret shown with View is covered when the UI timer jumps by more than five seconds (the process was suspended) or when `OpenInputDesktop` fails (Windows is locked). View asks Hello again and checks that the PRF output still unwraps the sidecar before it shows the secret.
+
+The master password is typed into a masked field. The CLI still uses `getpass`, because that path has a terminal. The field is cleared before Argon2 runs. The master is not kept after Hello wraps the vault key. A CLI salt rotation still makes the old sidecar fail closed. Typing the master then asks Hello once and rewrites the sidecar with the new key, instead of creating a second passkey when the old one still answers.
+
+Hello uses relying party id `signet.pwm.local` and the display name Signet. The raw hmac-secret flag stays off, matching the probe.
+
+---
+
 ## 2026-10-28 — The sidecar wraps the vault key, and Signet saves keep the salt
 
 `src/pwm/sidecar.py` is the SGN1 file from SPEC §13.2. Tests pass a fake PRF output. They do not call Windows Hello. `pwm` is unchanged: `Vault.save` still calls `encrypt_vault`, which mints a new salt and needs the master password in memory.
