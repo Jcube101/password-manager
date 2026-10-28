@@ -467,7 +467,7 @@ Byte layout, little-endian:
 
 Associated data is everything before the nonce (magic through PRF salt).
 
-The wrapping key is the PRF output. When that output is 32 bytes, use it directly as an AES-GCM key from `cryptography`. When it is not, derive 32 bytes with HKDF-SHA256 from `cryptography` and use that. Do not invent another cipher. Do not replace Argon2id for the master password.
+The wrapping key is the PRF output. When that output is 32 bytes, use it directly as an AES-GCM key from `cryptography`. When it is not, derive 32 bytes with HKDF-SHA256 from `cryptography`: length 32, no salt, info `signet-wrap-v1`. An empty PRF output is a failure. Do not invent another cipher. Do not replace Argon2id for the master password.
 
 Writes are atomic (sibling `.tmp`, then replace), same rule as the vault.
 
@@ -511,4 +511,4 @@ The window toolkit is an implementation choice. It must stay on this computer an
 Initial version: 2026-06-14  
 Updated 2026-08-16: added §7.0 landing page for bare `pwm` (PWM-R009).  
 Updated 2026-08-16: added §7.11 `pwm backup` (PWM-R007). Copies ciphertext only; no decrypt.  
-Updated 2026-10-28: added §13 Signet. The window uses the existing Windows Hello PIN. A PIN change in Windows needs nothing inside Signet. One Hello unlock lasts 24 hours. Launch is a Start menu shortcut, not `pwm`. The same day, Windows Hello on this PC returned a stable 32-byte PRF output (WebAuthn API 9). No Signet code yet.
+Updated 2026-10-28: added §13 Signet. The window uses the existing Windows Hello PIN. A PIN change in Windows needs nothing inside Signet. One Hello unlock lasts 24 hours. Launch is a Start menu shortcut, not `pwm`. The same day, Windows Hello on this PC returned a stable 32-byte PRF output (WebAuthn API 9). The sidecar format is implemented. The window is not.

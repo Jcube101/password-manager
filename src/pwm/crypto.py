@@ -5,7 +5,8 @@ Implements the exact contracts from SPEC.md:
 - Argon2id key derivation (memory-hard, side-channel resistant)
 - AES-256-GCM authenticated encryption for the vault
 - Explicit on-disk header format with persisted Argon2 parameters
-- Fresh salt + nonce on every encryption
+- Fresh salt + nonce on every CLI encryption
+- Signet re-encryption keeps that salt and mints only a new nonce
 - Clean, non-leaking error on decryption failure (wrong master or corruption)
 
 NEVER roll your own primitives. We only wrap audited libraries.
@@ -157,6 +158,22 @@ def _decrypt_raw(nonce: bytes, ciphertext: bytes, key: bytes) -> bytes:
 # High-level vault (de)serialization used by the Vault layer
 # ---------------------------------------------------------------------
 
+def _aad(params: ArgonParams, salt: bytes) -> bytes:
+    """Header prefix bound into AES-GCM. Magic through salt, not the nonce."""
+    if len(salt) != SALT_SIZE:
+        raise ValueError(f"Salt must be exactly {SALT_SIZE} bytes")
+
+    partial = bytearray()
+    partial.extend(MAGIC)
+    partial.append(FORMAT_VERSION)
+    partial.extend(struct.pack("<I", params.time_cost))
+    partial.extend(struct.pack("<I", params.memory_cost))
+    partial.append(params.parallelism)
+    partial.extend(salt)
+    assert len(partial) == 30
+    return bytes(partial)
+
+
 def _pack_header(
     params: ArgonParams,
     salt: bytes,
@@ -230,19 +247,9 @@ def encrypt_vault(
     # First encrypt with no AAD for the raw content (simpler), then we will
     # include AAD = header-without-nonce when we have the full picture.
     #
-    # Per SPEC v1 we bind magic+fmt+params+salt as AAD.
-    # We do this by building the partial header first.
+    # AAD is magic, version, Argon2 parameters, and salt. The nonce is excluded.
     nonce = os.urandom(NONCE_SIZE)
-
-    # Build partial header (no nonce yet) for AAD
-    partial_header = bytearray()
-    partial_header.extend(MAGIC)
-    partial_header.append(FORMAT_VERSION)
-    partial_header.extend(struct.pack("<I", params.time_cost))
-    partial_header.extend(struct.pack("<I", params.memory_cost))
-    partial_header.append(params.parallelism)
-    partial_header.extend(salt)
-    aad = bytes(partial_header)  # 30 bytes
+    aad = _aad(params, salt)
 
     aesgcm = AESGCM(key)
     ct = aesgcm.encrypt(nonce, plaintext, associated_data=aad)
@@ -265,20 +272,61 @@ def decrypt_vault(
         raise VaultDecryptionError("Vault file is too small to be valid")
 
     params, salt, nonce = _unpack_header(blob)
-    ciphertext = blob[HEADER_SIZE:]
-
     key = derive_key(master_password, salt, params)
+    return _decrypt_with_key(blob, key, params, salt, nonce)
 
-    # Reconstruct the same AAD used at encryption time
-    partial_header = bytearray()
-    partial_header.extend(MAGIC)
-    partial_header.append(FORMAT_VERSION)
-    partial_header.extend(struct.pack("<I", params.time_cost))
-    partial_header.extend(struct.pack("<I", params.memory_cost))
-    partial_header.append(params.parallelism)
-    partial_header.extend(salt)
-    aad = bytes(partial_header)
 
+def decrypt_vault_with_key(
+    blob: bytes,
+    key: bytes,
+) -> tuple[bytes, ArgonParams]:
+    """Decrypt a vault blob with a key Signet already holds.
+
+    Does not use the master password and does not run Argon2.
+    A wrong key raises VaultDecryptionError, the same as a wrong master.
+    """
+    if len(blob) < HEADER_SIZE:
+        raise VaultDecryptionError("Vault file is too small to be valid")
+
+    params, salt, nonce = _unpack_header(blob)
+    return _decrypt_with_key(blob, key, params, salt, nonce)
+
+
+def reencrypt_vault_with_key(
+    plaintext: bytes,
+    previous_blob: bytes,
+    key: bytes,
+) -> bytes:
+    """Signet save. Keep the salt and Argon2 parameters. Mint a new nonce.
+
+    The key must be the one already derived for that salt. CLI saves must
+    keep calling encrypt_vault, which mints a new salt and needs the master.
+    """
+    if len(key) != 32:
+        raise ValueError("Key must be 32 bytes for AES-256-GCM")
+    if len(previous_blob) < HEADER_SIZE:
+        raise VaultDecryptionError("Vault file is too small to be valid")
+
+    params, salt, _previous_nonce = _unpack_header(previous_blob)
+    nonce = os.urandom(NONCE_SIZE)
+    ciphertext = AESGCM(key).encrypt(nonce, plaintext, associated_data=_aad(params, salt))
+    return _pack_header(params, salt, nonce) + ciphertext
+
+
+def _decrypt_with_key(
+    blob: bytes,
+    key: bytes,
+    params: ArgonParams,
+    salt: bytes,
+    nonce: bytes,
+) -> tuple[bytes, ArgonParams]:
+    if len(key) != 32:
+        raise VaultDecryptionError(
+            "Decryption failed. Wrong master password or the vault file is corrupted."
+        )
+
+    ciphertext = blob[HEADER_SIZE:]
+    aad = _aad(params, salt)
     aesgcm = AESGCM(key)
     try:
         plaintext = aesgcm.decrypt(nonce, ciphertext, associated_data=aad)

@@ -51,7 +51,7 @@ The direction for the next surface. The window is named **Signet**. The CLI comm
 
 **Open**
 
-- Nothing the user still has to choose. The on-machine PRF check passed. The sidecar and the window are not written yet.
+- Nothing the user still has to choose. The on-machine PRF check passed. The sidecar format is implemented and tested with a fake PRF output. The window is not written yet.
 
 **Related tickets, and what not to build instead**
 
@@ -164,7 +164,7 @@ The user wants to open this vault from their phone someday. The phone has a fing
 - Always re-evaluate security impact. Many of these (keyring, TOTP, import) increase surface area.
 - Keep the "educational first" spirit: each new feature should come with clear explanations in code comments and LEARNINGS.md.
 
-Current as of 2026-10-28. v1 core is complete. PWM-R009 (landing page) and PWM-R007 (`pwm backup`) shipped — see "Recently shipped" below. 35 automated tests passing. PWM-R110 is Signet. The contract is SPEC.md §13. Not implemented. The Hello PRF check passed on this PC on 2026-10-28. The CLI command stays `pwm`. Daily unlock is the existing Windows Hello PIN, and one unlock lasts 24 hours. Signet will be started from the Start menu, not by typing `pwm`. PWM-R111 records a later phone client on the user's Pi. The network carries ciphertext only. It is not started.
+Current as of 2026-10-28. v1 core is complete. PWM-R009 (landing page) and PWM-R007 (`pwm backup`) shipped — see "Recently shipped" below. 35 automated tests passing. PWM-R110 is Signet. The contract is SPEC.md §13. The sidecar format is implemented. The window is not. The Hello PRF check passed on this PC on 2026-10-28. The CLI command stays `pwm`. Daily unlock is the existing Windows Hello PIN, and one unlock lasts 24 hours. Signet will be started from the Start menu, not by typing `pwm`. PWM-R111 records a later phone client on the user's Pi. The network carries ciphertext only. It is not started.
 
 ---
 

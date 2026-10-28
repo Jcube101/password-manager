@@ -6,6 +6,16 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-10-28 — The sidecar wraps the vault key, and Signet saves keep the salt
+
+`src/pwm/sidecar.py` is the SGN1 file from SPEC §13.2. Tests pass a fake PRF output. They do not call Windows Hello. `pwm` is unchanged: `Vault.save` still calls `encrypt_vault`, which mints a new salt and needs the master password in memory.
+
+Signet does not have the master at save time. `reencrypt_vault_with_key` copies the salt and Argon2 parameters out of the current blob, mints a new nonce, and encrypts with the key already in memory. `decrypt_vault_with_key` opens that blob without Argon2. Both use the same AAD as `encrypt_vault` (magic through salt). A CLI save still rotates the salt, so the old wrapped key fails `open_with_sidecar` with `SidecarMismatch` until the master is typed and the new key is wrapped.
+
+HKDF is only for a PRF output that is not 32 bytes. This PC returned 32, so that path is the identity. Other lengths use HKDF-SHA256, length 32, no salt, info `signet-wrap-v1`. The info string is domain separation so this key is not reused for some other HKDF in the program later. An empty output is rejected.
+
+---
+
 ## 2026-10-28 — Windows Hello PRF works on this PC
 
 Called `webauthn.dll` directly. No browser, no port, and no vault file. WebAuthn API version 9. The platform authenticator is available.

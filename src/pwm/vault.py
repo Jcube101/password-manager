@@ -134,7 +134,9 @@ class Vault:
         self._params_used = None  # will be read on next load if needed
 
     # ------------------------------------------------------------------
-    # Save (always re-encrypts with fresh salt/nonce)
+    # CLI save. Fresh salt and nonce, key re-derived from the master.
+    # Signet must not call this. It holds the vault key, not the master,
+    # and re-encrypts with reencrypt_vault_with_key.
     # ------------------------------------------------------------------
 
     def _atomic_write(self, blob: bytes) -> None:
