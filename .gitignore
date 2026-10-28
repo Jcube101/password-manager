@@ -48,6 +48,9 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
+# Local brainstorm mockups. The session key lives here.
+.superpowers/
 *.swp
 *.swo
 

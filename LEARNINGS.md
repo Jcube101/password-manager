@@ -6,6 +6,36 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-10-28 — Signet, in Ink
+
+The desktop window's display name is Signet. The CLI command stays `pwm`. Do not rename the console script. Color is Ink: near-black surfaces, warm off-white text, a single brass accent. Chosen over Paper, Tide, and Clay, and over the names Coffer, Latch, and Folio. Recorded on PWM-R110. Still not in SPEC. No code.
+
+---
+
+## 2026-10-28 — Desktop window layout: list works, side panel is the look
+
+Follow-up to PWM-R110. The user wants the full list as the functional surface. Copy stays on every row and does not require opening the entry. Clicking a row opens a side panel with the rest of the entry (username, URL, notes, tags, hidden secret). The panel has Copy and a button labeled View. View still requires a second Hello PIN. The label does not say PIN. The panel is intentional even though copy does not need it: this is a public-facing project and the list-plus-entry view looks finished. Several tags per entry, already the data model. Narrow panel is out. Still not in SPEC. No code.
+
+---
+
+## 2026-10-28 — Desktop window is the next surface (PWM-R110), not built
+
+The user wants to rethink daily use. The CLI stays. The pain is reaching a terminal, typing the master on every command, and having no list of labels to look at.
+
+Agreed in conversation, recorded in `ROADMAP.md` as PWM-R110. Not in SPEC. No code.
+
+- A desktop window on this PC, same vault file.
+- Daily unlock is Windows Hello PIN via a passkey whose PRF secret unwraps the vault key. This PC is Windows 11 26H2 build 26300, which is past the February 2026 Hello hmac-secret update. Still has to be proven on the machine.
+- Master password remains recovery (new PC, reinstall, Hello failure) and remains what the CLI asks for. The PIN secret does not travel with the Drive backup.
+- Lock on sleep, Windows lock, and idle. Wipe the key. Coming back is the PIN again.
+- The list shows labels. Copy uses the unlock already done and does not show the secret. View asks for the PIN again.
+- Personal access tokens and API keys are the same entry as a password. A tag can say `token` or `api-key`. TOTP stays PWM-R002.
+- PWM-R001 (DPAPI / keyring) is the weaker unlock and is not the app design. PWM-R101 and PWM-R102 are other surfaces.
+
+Layout (narrow panel, full list, or list plus detail) was still open when this was written.
+
+---
+
 ## 2026-08-16 — Local vs cloud: having a backup *folder* is not a backup
 
 After `pwm backup` shipped, the user asked whether they had a local copy, a cloud copy, or both. We listed the actual files instead of assuming.
