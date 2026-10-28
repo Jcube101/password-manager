@@ -1,8 +1,9 @@
 """
 Signet window.
 
-The list, Copy, and the side panel. Create, Edit, Delete, and the 24-hour
-clock are not in this slice. Typing ``pwm`` does not open this window.
+The list, Copy, the side panel, and Create, Edit, and Delete. The 24-hour
+clock and the Start menu shortcut are not in this slice. Typing ``pwm``
+does not open this window.
 Launch with ``python -m pwm.signet``.
 
 The toolkit is tkinter. It is a normal window on this PC. It does not open
@@ -18,6 +19,7 @@ import json
 import os
 import time
 import tkinter as tk
+import uuid
 from pathlib import Path
 from tkinter import font as tkfont
 
@@ -28,9 +30,11 @@ from pwm.crypto import (
     decrypt_vault_with_key,
     derive_key,
     get_header_info,
+    reencrypt_vault_with_key,
 )
+from pwm.generator import generate_password
 from pwm.hello import HelloCancelled, HelloError, enroll, evaluate
-from pwm.models import Entry
+from pwm.models import Entry, now_iso
 from pwm.sidecar import (
     SidecarError,
     SidecarMismatch,
@@ -42,7 +46,7 @@ from pwm.sidecar import (
     unwrap_vault_key,
     write_sidecar,
 )
-from pwm.vault import get_default_vault_path
+from pwm.vault import atomic_write, get_default_vault_path
 
 BG = "#141414"
 PANEL = "#1c1c1c"
@@ -57,13 +61,172 @@ MASK = "••••••••••••"
 
 def entries_from_plaintext(plaintext: bytes) -> list[Entry]:
     """Read entries out of a decrypted vault. The secret stays on the entry."""
-    data = json.loads(plaintext.decode("utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError("Vault plaintext is not an object")
+    data = _vault_object(plaintext)
     raw = data.get("entries", [])
     if not isinstance(raw, list):
         raise ValueError("Vault entries are not a list")
     return [Entry.from_dict(item) for item in raw]
+
+
+def document_created_at(plaintext: bytes) -> str:
+    """The vault document's created_at, kept stable across Signet saves."""
+    created = _vault_object(plaintext).get("created_at")
+    if isinstance(created, str) and created:
+        return created
+    return now_iso()
+
+
+def plaintext_for(entries: list[Entry], created_at: str) -> bytes:
+    data = {
+        "version": 1,
+        "created_at": created_at,
+        "entries": [entry.to_dict() for entry in entries],
+    }
+    return json.dumps(data, separators=(",", ":")).encode("utf-8")
+
+
+def parse_tags(text: str) -> list[str]:
+    """Split a tags field on commas and whitespace. Order is kept. Duplicates drop."""
+    tags: list[str] = []
+    for part in text.replace(",", " ").split():
+        if part not in tags:
+            tags.append(part)
+    return tags
+
+
+def _blank(value: str) -> str | None:
+    stripped = value.strip()
+    return stripped or None
+
+
+def add_entry(
+    entries: list[Entry],
+    *,
+    label: str,
+    username: str,
+    password: str,
+    url: str,
+    notes: str,
+    tags: list[str],
+) -> list[Entry]:
+    clean = label.strip()
+    if not clean:
+        raise ValueError("A label is required.")
+    if any(entry.label == clean for entry in entries):
+        raise ValueError(f"An entry with label '{clean}' already exists.")
+    created = Entry(
+        id=str(uuid.uuid4()),
+        label=clean,
+        username=_blank(username),
+        password=password,
+        url=_blank(url),
+        notes=_blank(notes),
+        tags=tags,
+    )
+    return [*entries, created]
+
+
+def replace_entry(
+    entries: list[Entry],
+    entry_id: str,
+    *,
+    label: str,
+    username: str,
+    password: str,
+    url: str,
+    notes: str,
+    tags: list[str],
+) -> list[Entry]:
+    clean = label.strip()
+    if not clean:
+        raise ValueError("A label is required.")
+    current = next((entry for entry in entries if entry.id == entry_id), None)
+    if current is None:
+        raise ValueError("That entry is no longer in the list.")
+    if any(entry.label == clean and entry.id != entry_id for entry in entries):
+        raise ValueError(f"An entry with label '{clean}' already exists.")
+    updated: list[Entry] = []
+    for entry in entries:
+        if entry.id != entry_id:
+            updated.append(entry)
+            continue
+        changed = Entry(
+            id=entry.id,
+            label=clean,
+            username=_blank(username),
+            password=password,
+            url=_blank(url),
+            notes=_blank(notes),
+            tags=tags,
+            created_at=entry.created_at,
+            updated_at=entry.updated_at,
+        )
+        changed.touch()
+        updated.append(changed)
+    return updated
+
+
+def delete_entry(entries: list[Entry], entry_id: str, typed_label: str) -> list[Entry]:
+    current = next((entry for entry in entries if entry.id == entry_id), None)
+    if current is None:
+        raise ValueError("That entry is no longer in the list.")
+    if typed_label != current.label:
+        raise ValueError("Type the label exactly.")
+    return [entry for entry in entries if entry.id != entry_id]
+
+
+class VaultChangedError(VaultDecryptionError):
+    """The file on disk no longer opens with the key this session holds."""
+
+
+def save_unlocked(
+    vault_path: Path,
+    key: bytes,
+    entries: list[Entry],
+    *,
+    created_at: str,
+    prf_output: bytes | None,
+) -> str | None:
+    """Signet save. Same salt, fresh vault nonce, same vault key.
+
+    When the PRF output is still in memory, the sidecar is rewritten with a
+    fresh nonce and the same PRF salt. This does not ask for Hello and does
+    not use the master password. The vault key is unchanged, so an old sidecar
+    still unwraps the vault if the rewrite fails. The return value is a
+    warning in that case, and None when the sidecar was refreshed or absent.
+
+    The key must still decrypt the file. A CLI save rotates the salt and
+    derives a new key. Writing the in-memory entries under that new salt
+    with the old key would make the master password unable to open the vault.
+    """
+    if len(key) != 32:
+        raise ValueError("Vault key must be 32 bytes")
+    previous = Path(vault_path).read_bytes()
+    try:
+        decrypt_vault_with_key(previous, key)
+    except VaultDecryptionError as exc:
+        raise VaultChangedError(
+            "The vault file changed outside Signet. The master password is required."
+        ) from exc
+    blob = reencrypt_vault_with_key(plaintext_for(entries, created_at), previous, key)
+    atomic_write(Path(vault_path), blob)
+    if not prf_output:
+        return None
+    try:
+        side = read_sidecar(Path(vault_path))
+        if side is None:
+            return None
+        write_sidecar(Path(vault_path), rewrite_sidecar(side, key, prf_output))
+    except (OSError, SidecarError, ValueError):
+        return "Saved the vault. The Hello file was not refreshed."
+    return None
+
+
+def _vault_object(plaintext: bytes) -> dict:
+    data = json.loads(plaintext.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Vault plaintext is not an object")
+    return data
 
 
 def filter_entries(entries: list[Entry], text: str, tag: str | None) -> list[Entry]:
@@ -129,15 +292,28 @@ class SignetApp:
         self.vault_key: bytes | None = None
         self.credential_id: bytes | None = None
         self.prf_salt: bytes | None = None
+        self.prf_output: bytes | None = None
+        self.created_at: str | None = None
         self.selected_id: str | None = None
         self.revealed_id: str | None = None
+        self._mode = "entry"
+        self._form_shown = False
         self._filter: tk.StringVar | None = None
         self._sort: tk.StringVar | None = None
         self._tag = "All"
         self._last_tick = time.monotonic()
+        self._watch_job: str | None = None
         self._list_inner: tk.Frame | None = None
         self._secret_value: tk.Label | None = None
         self._panel: tk.Frame | None = None
+        self.form_label: tk.Entry | None = None
+        self.form_username: tk.Entry | None = None
+        self.form_secret: tk.Entry | None = None
+        self.form_url: tk.Entry | None = None
+        self.form_notes: tk.Text | None = None
+        self.form_tags: tk.Entry | None = None
+        self.form_confirm: tk.Entry | None = None
+        self._form_error: tk.Label | None = None
 
     def run(self) -> None:
         self.start()
@@ -165,7 +341,7 @@ class SignetApp:
         return int(self.root.winfo_id())
 
     def _build(self) -> None:
-        root = tk.Tk()
+        root = _open_root()
         root.title("Signet")
         root.configure(bg=BG)
         root.geometry("980x640")
@@ -188,18 +364,27 @@ class SignetApp:
 
         self.status = tk.Label(root, text="", bg=BG, fg=MUTED, anchor="w")
         self.status.pack(fill="x", padx=16, pady=(0, 10))
-        root.after(400, self._watch_desktop)
+        self._watch_job = root.after(400, self._watch_desktop)
 
     def close(self) -> None:
         self.entries = []
         self.vault_key = None
         self.credential_id = None
         self.prf_salt = None
+        self.prf_output = None
+        self.created_at = None
         self.revealed_id = None
-        gc.collect()
+        self._form_shown = False
         if self.root is not None:
+            if self._watch_job is not None:
+                try:
+                    self.root.after_cancel(self._watch_job)
+                except tk.TclError:
+                    pass
+                self._watch_job = None
             self.root.destroy()
             self.root = None
+        gc.collect()
 
     def _clear_body(self) -> None:
         assert self.body is not None
@@ -210,6 +395,7 @@ class SignetApp:
         self._list_inner = None
         self._secret_value = None
         self._panel = None
+        self._forget_form()
 
     def _set_status(self, text: str) -> None:
         if self.status is not None:
@@ -231,7 +417,10 @@ class SignetApp:
         self._clear_body()
         self.entries = []
         self.vault_key = None
+        self.prf_output = None
+        self.created_at = None
         self.revealed_id = None
+        self._mode = "entry"
         assert self.body is not None
         wrap = tk.Frame(self.body, bg=BG)
         wrap.pack(anchor="w", padx=28, pady=28)
@@ -260,7 +449,10 @@ class SignetApp:
         self._clear_body()
         self.entries = []
         self.vault_key = None
+        self.prf_output = None
+        self.created_at = None
         self.revealed_id = None
+        self._mode = "entry"
         assert self.body is not None
         wrap = tk.Frame(self.body, bg=BG)
         wrap.pack(anchor="w", padx=28, pady=28)
@@ -301,6 +493,7 @@ class SignetApp:
             key = derive_key(master, bytes.fromhex(info["salt_hex"]), params)
             plaintext, _params = decrypt_vault_with_key(blob, key)
             entries = entries_from_plaintext(plaintext)
+            created_at = document_created_at(plaintext)
         except (VaultDecryptionError, ValueError, json.JSONDecodeError, KeyError):
             self._show_error(
                 "Decryption failed. Wrong master password or the vault file is corrupted."
@@ -309,14 +502,19 @@ class SignetApp:
             return
         finally:
             master = ""
-        self._finish_with_key(key, entries)
+        self._finish_with_key(key, entries, created_at)
 
     def _show_error(self, text: str) -> None:
         if self.error_label is not None:
             self.error_label.configure(text=text)
 
-    def _finish_with_key(self, key: bytes, entries: list[Entry]) -> None:
-        """Hello-wrap the key we just derived, then show the list."""
+    def _finish_with_key(self, key: bytes, entries: list[Entry], created_at: str) -> None:
+        """Hello-wrap the key we just derived, then show the list.
+
+        The PRF output stays in memory for this session so a later save can
+        refresh the sidecar. It is not the master password, and it is not written
+        anywhere except inside that sidecar.
+        """
         side = read_sidecar(self.vault_path)
         if side is not None:
             try:
@@ -326,13 +524,14 @@ class SignetApp:
                 self.root.update_idletasks()
                 prf = evaluate(self.hwnd(), parsed.credential_id, parsed.prf_salt)
                 try:
+                    held = bytes(prf)
                     refreshed = rewrite_sidecar(side, key, prf)
                     write_sidecar(self.vault_path, refreshed)
                     self.credential_id = parsed.credential_id
                     self.prf_salt = bytes(parsed.prf_salt)
                 finally:
                     del prf
-                self._enter(key, entries)
+                self._enter(key, entries, created_at, held)
                 return
             except HelloCancelled:
                 self.vault_key = None
@@ -350,6 +549,7 @@ class SignetApp:
         try:
             credential_id, prf = enroll(self.hwnd(), prf_salt)
             try:
+                held = bytes(prf)
                 blob = build_sidecar(
                     key,
                     prf,
@@ -369,7 +569,7 @@ class SignetApp:
             return
         self.credential_id = credential_id
         self.prf_salt = prf_salt
-        self._enter(key, entries)
+        self._enter(key, entries, created_at, held)
 
     def hello_unlock(self) -> None:
         side = read_sidecar(self.vault_path)
@@ -390,6 +590,8 @@ class SignetApp:
                 plaintext = open_with_sidecar(blob, side, prf)
                 key = unwrap_vault_key(side, prf)
                 entries = entries_from_plaintext(plaintext)
+                created_at = document_created_at(plaintext)
+                held = bytes(prf)
             finally:
                 del prf
         except HelloCancelled:
@@ -405,13 +607,23 @@ class SignetApp:
             return
         self.credential_id = parsed.credential_id
         self.prf_salt = bytes(parsed.prf_salt)
-        self._enter(key, entries)
+        self._enter(key, entries, created_at, held)
 
-    def _enter(self, key: bytes, entries: list[Entry]) -> None:
+    def _enter(
+        self,
+        key: bytes,
+        entries: list[Entry],
+        created_at: str,
+        prf_output: bytes | None,
+    ) -> None:
         self.vault_key = key
         self.entries = entries
+        self.created_at = created_at
+        self.prf_output = bytes(prf_output) if prf_output else None
         self.selected_id = entries[0].id if entries else None
         self.revealed_id = None
+        self._mode = "entry"
+        self._form_shown = False
         self._tag = "All"
         self.show_list()
 
@@ -440,9 +652,10 @@ class SignetApp:
         )
         filter_box.pack(side="left", fill="x", expand=True, ipady=6)
         self._filter.trace_add("write", lambda *_args: self.refresh_rows())
+        _button(tools, "Create new", self.start_create, primary=True).pack(side="right", padx=(8, 0))
         sort = tk.OptionMenu(tools, self._sort, "Label", "Username", command=lambda _value: self.refresh_rows())
         sort.configure(bg=PANEL, fg=MUTED, activebackground=PANEL, relief="flat", highlightthickness=0)
-        sort.pack(side="left", padx=(8, 0))
+        sort.pack(side="right", padx=(8, 0))
 
         self._tags = tk.Frame(list_side, bg=BG)
         self._tags.pack(fill="x", padx=16, pady=(0, 8))
@@ -468,7 +681,6 @@ class SignetApp:
         ).pack(anchor="w", padx=16, pady=(0, 12))
 
         self.refresh_rows()
-        self._render_panel()
         self._set_status(f"{len(self.entries)} entries")
 
     def refresh_rows(self) -> None:
@@ -482,7 +694,7 @@ class SignetApp:
             filter_entries(self.entries, self._filter.get(), self._tag),
             self._sort.get(),
         )
-        if self.selected_id not in {entry.id for entry in visible}:
+        if self._mode == "entry" and self.selected_id not in {entry.id for entry in visible}:
             self.selected_id = visible[0].id if visible else None
             self.revealed_id = None
         if not visible:
@@ -491,7 +703,8 @@ class SignetApp:
             )
         for entry in visible:
             self._render_row(entry)
-        self._render_panel()
+        if self._mode == "entry":
+            self._render_panel()
 
     def _render_tags(self) -> None:
         assert hasattr(self, "_tags")
@@ -546,6 +759,8 @@ class SignetApp:
         if entry_id != self.revealed_id:
             self.revealed_id = None
         self.selected_id = entry_id
+        self._mode = "entry"
+        self._form_shown = False
         if self.root is not None:
             self.root.after_idle(self.refresh_rows)
 
@@ -561,6 +776,29 @@ class SignetApp:
         for child in self._panel.winfo_children():
             child.destroy()
         self._secret_value = None
+        self._forget_form()
+        if self._mode == "create":
+            self._render_form(None)
+        elif self._mode == "edit" and self._selected() is not None:
+            self._render_form(self._selected())
+        elif self._mode == "delete" and self._selected() is not None:
+            self._render_delete()
+        else:
+            self._mode = "entry"
+            self._render_entry()
+
+    def _forget_form(self) -> None:
+        self.form_label = None
+        self.form_username = None
+        self.form_secret = None
+        self.form_url = None
+        self.form_notes = None
+        self.form_tags = None
+        self.form_confirm = None
+        self._form_error = None
+
+    def _render_entry(self) -> None:
+        assert self._panel is not None
         entry = self._selected()
         pad = tk.Frame(self._panel, bg=PANEL)
         pad.pack(fill="both", expand=True, padx=18, pady=18)
@@ -580,6 +818,280 @@ class SignetApp:
         actions.pack(anchor="w", pady=(16, 0))
         _button(actions, "Copy", lambda: self.copy_entry(entry.id), primary=True).pack(side="left")
         _button(actions, "View", lambda: self.view_entry(entry.id)).pack(side="left", padx=(8, 0))
+        _button(actions, "Edit", self.start_edit).pack(side="left", padx=(8, 0))
+        _button(actions, "Delete", self.start_delete, quiet=True).pack(side="left", padx=(8, 0))
+
+    def start_create(self) -> None:
+        self._mode = "create"
+        self.revealed_id = None
+        self._later(self._render_panel)
+
+    def start_edit(self) -> None:
+        if self._selected() is None:
+            return
+        self._mode = "edit"
+        self._later(self._render_panel)
+
+    def start_delete(self) -> None:
+        if self._selected() is None:
+            return
+        self._mode = "delete"
+        self.revealed_id = None
+        self._form_shown = False
+        self._later(self._render_panel)
+
+    def cancel_form(self) -> None:
+        self._mode = "entry"
+        self._form_shown = False
+        self._later(self._render_panel)
+
+    def _later(self, callback) -> None:
+        """Run after the click returns, so Tk is not destroying the clicked widget."""
+        if self.root is None:
+            callback()
+            return
+        self.root.after_idle(callback)
+
+    def _render_form(self, entry: Entry | None) -> None:
+        assert self._panel is not None
+        creating = entry is None
+        pad = tk.Frame(self._panel, bg=PANEL)
+        pad.pack(fill="both", expand=True, padx=18, pady=18)
+        tk.Label(pad, text="NEW ENTRY" if creating else "EDIT ENTRY", bg=PANEL, fg=MUTED).pack(anchor="w")
+        self.form_label = self._form_entry(pad, "Label", "" if entry is None else entry.label)
+        self.form_username = self._form_entry(pad, "Username", "" if entry is None else (entry.username or ""))
+        secret = "" if entry is None else entry.password
+        self._form_shown = creating or (entry is not None and self.revealed_id == entry.id)
+        secret_row = tk.Frame(pad, bg=PANEL)
+        secret_row.pack(fill="x")
+        self.form_secret = self._form_entry(
+            secret_row,
+            "Secret",
+            secret,
+            show="" if self._form_shown else "*",
+        )
+        secret_actions = tk.Frame(pad, bg=PANEL)
+        secret_actions.pack(anchor="w", pady=(6, 0))
+        _button(secret_actions, "Generate", self.fill_generated).pack(side="left")
+        if not creating:
+            _button(secret_actions, "View", self.reveal_form_secret).pack(side="left", padx=(8, 0))
+        self.form_url = self._form_entry(pad, "URL", "" if entry is None else (entry.url or ""))
+        self.form_notes = self._form_notes(pad, "" if entry is None else (entry.notes or ""))
+        self.form_tags = self._form_entry(
+            pad,
+            "Tags",
+            "" if entry is None else " ".join(entry.tags),
+        )
+        tk.Label(
+            pad,
+            text="Separate tags with spaces or commas.",
+            bg=PANEL,
+            fg=MUTED,
+        ).pack(anchor="w", pady=(4, 0))
+        self._form_error = tk.Label(pad, text="", bg=PANEL, fg=BRASS, wraplength=270, justify="left")
+        self._form_error.pack(anchor="w", pady=(8, 0))
+        actions = tk.Frame(pad, bg=PANEL)
+        actions.pack(anchor="w", pady=(12, 0))
+        _button(actions, "Save", self.save_form, primary=True).pack(side="left")
+        _button(actions, "Cancel", self.cancel_form).pack(side="left", padx=(8, 0))
+
+    def _form_entry(self, parent: tk.Misc, caption: str, value: str, *, show: str = "") -> tk.Entry:
+        tk.Label(parent, text=caption.upper(), bg=PANEL, fg=MUTED).pack(anchor="w", pady=(8, 2))
+        entry = tk.Entry(
+            parent,
+            show=show,
+            bg=BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor=BRASS,
+        )
+        entry.pack(fill="x", ipady=4)
+        if value:
+            entry.insert(0, value)
+        return entry
+
+    def _form_notes(self, parent: tk.Misc, value: str) -> tk.Text:
+        tk.Label(parent, text="NOTES", bg=PANEL, fg=MUTED).pack(anchor="w", pady=(8, 2))
+        box = tk.Text(
+            parent,
+            height=3,
+            bg=BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor=BRASS,
+            wrap="word",
+        )
+        box.pack(fill="x")
+        if value:
+            box.insert("1.0", value)
+        return box
+
+    def _show_form_error(self, text: str) -> None:
+        if self._form_error is not None:
+            self._form_error.configure(text=text)
+        self._set_status(text)
+
+    def fill_generated(self) -> None:
+        if self.form_secret is None:
+            return
+        self.form_secret.delete(0, "end")
+        self.form_secret.insert(0, generate_password())
+        self.form_secret.configure(show="")
+        self._form_shown = True
+
+    def reveal_form_secret(self) -> None:
+        if self.form_secret is None:
+            return
+        if self._form_shown:
+            self.form_secret.configure(show="*")
+            self._form_shown = False
+            self.revealed_id = None
+            self._set_status("Secret hidden")
+            return
+        if not self._confirm_view():
+            return
+        self.form_secret.configure(show="")
+        self._form_shown = True
+        if self.selected_id is not None:
+            self.revealed_id = self.selected_id
+        self._set_status("Secret shown until you leave it, lock Windows, or sleep.")
+
+    def _form_values(self) -> tuple[str, str, str, str, str, list[str]]:
+        assert self.form_label is not None
+        assert self.form_username is not None
+        assert self.form_secret is not None
+        assert self.form_url is not None
+        assert self.form_notes is not None
+        assert self.form_tags is not None
+        notes = self.form_notes.get("1.0", "end-1c")
+        return (
+            self.form_label.get(),
+            self.form_username.get(),
+            self.form_secret.get(),
+            self.form_url.get(),
+            notes,
+            parse_tags(self.form_tags.get()),
+        )
+
+    def save_form(self) -> None:
+        if self.vault_key is None or not self.created_at:
+            self._show_form_error("Unlock the vault before saving.")
+            return
+        if self.form_label is None:
+            return
+        label, username, password, url, notes, tags = self._form_values()
+        try:
+            if self._mode == "create":
+                updated = add_entry(
+                    self.entries,
+                    label=label,
+                    username=username,
+                    password=password,
+                    url=url,
+                    notes=notes,
+                    tags=tags,
+                )
+                selected = updated[-1].id
+            else:
+                current = self._selected()
+                if current is None:
+                    self._show_form_error("That entry is no longer in the list.")
+                    return
+                updated = replace_entry(
+                    self.entries,
+                    current.id,
+                    label=label,
+                    username=username,
+                    password=password,
+                    url=url,
+                    notes=notes,
+                    tags=tags,
+                )
+                selected = current.id
+        except ValueError as exc:
+            self._show_form_error(str(exc))
+            return
+        self._write_entries(updated, selected=selected, success="Saved")
+
+    def _render_delete(self) -> None:
+        assert self._panel is not None
+        entry = self._selected()
+        assert entry is not None
+        pad = tk.Frame(self._panel, bg=PANEL)
+        pad.pack(fill="both", expand=True, padx=18, pady=18)
+        tk.Label(pad, text="DELETE ENTRY", bg=PANEL, fg=MUTED).pack(anchor="w")
+        tk.Label(
+            pad,
+            text=f"Type {entry.label} to delete this entry.",
+            bg=PANEL,
+            fg=TEXT,
+            wraplength=270,
+            justify="left",
+        ).pack(anchor="w", pady=(12, 0))
+        self.form_confirm = self._form_entry(pad, "Label", "")
+        self._form_error = tk.Label(pad, text="", bg=PANEL, fg=BRASS, wraplength=270, justify="left")
+        self._form_error.pack(anchor="w", pady=(8, 0))
+        actions = tk.Frame(pad, bg=PANEL)
+        actions.pack(anchor="w", pady=(12, 0))
+        _button(actions, "Delete", self.confirm_delete, quiet=True).pack(side="left")
+        _button(actions, "Cancel", self.cancel_form).pack(side="left", padx=(8, 0))
+
+    def confirm_delete(self) -> None:
+        entry = self._selected()
+        if entry is None or self.form_confirm is None:
+            return
+        if self.vault_key is None or not self.created_at:
+            self._show_form_error("Unlock the vault before saving.")
+            return
+        try:
+            updated = delete_entry(self.entries, entry.id, self.form_confirm.get())
+        except ValueError as exc:
+            self._show_form_error(str(exc))
+            return
+        self._write_entries(
+            updated,
+            selected=updated[0].id if updated else None,
+            success="Deleted",
+        )
+
+    def _write_entries(self, updated: list[Entry], *, selected: str | None, success: str) -> None:
+        if self.vault_key is None or not self.created_at:
+            self._show_form_error("Unlock the vault before saving.")
+            return
+        try:
+            warning = save_unlocked(
+                self.vault_path,
+                self.vault_key,
+                updated,
+                created_at=self.created_at,
+                prf_output=self.prf_output,
+            )
+        except VaultChangedError:
+            self._later(self._vault_changed)
+            return
+        except (OSError, ValueError, VaultDecryptionError):
+            self._show_form_error("Signet could not save the vault.")
+            return
+        self.entries = updated
+        self.selected_id = selected
+        self.revealed_id = None
+        self._form_shown = False
+        self._mode = "entry"
+        self._set_status(warning or success)
+        self._later(self.refresh_rows)
+
+    def _vault_changed(self) -> None:
+        """A CLI save rotated the key. Leave that file alone and ask for the master."""
+        self.show_master(
+            "The vault file changed outside Signet, so this edit was not saved. "
+            "Type the master password to open the current file."
+        )
 
     def _field(self, parent: tk.Frame, caption: str, value: str) -> tk.Label:
         tk.Label(parent, text=caption.upper(), bg=PANEL, fg=MUTED).pack(anchor="w", pady=(8, 0))
@@ -595,14 +1107,23 @@ class SignetApp:
         self._set_status(f"Copied {entry.label}")
 
     def view_entry(self, entry_id: str) -> None:
-        if self.credential_id is None or self.prf_salt is None:
-            self._set_status("View needs Windows Hello, and this window has no passkey yet.")
-            return
         if self.revealed_id == entry_id:
             self.revealed_id = None
             self._render_panel()
             self._set_status("Secret hidden")
             return
+        if not self._confirm_view():
+            return
+        self.revealed_id = entry_id
+        self.selected_id = entry_id
+        self._render_panel()
+        self._set_status("Secret shown until you leave it, lock Windows, or sleep.")
+
+    def _confirm_view(self) -> bool:
+        """Ask Hello again. The session PRF used for saves stays as it was."""
+        if self.credential_id is None or self.prf_salt is None:
+            self._set_status("View needs Windows Hello, and this window has no passkey yet.")
+            return False
         self._set_status("Approve Windows Hello to view this secret.")
         assert self.root is not None
         self.root.update_idletasks()
@@ -617,14 +1138,11 @@ class SignetApp:
                 del prf
         except HelloCancelled:
             self._set_status("View cancelled. The secret stays hidden.")
-            return
+            return False
         except (HelloError, SidecarError, OSError):
             self._set_status("Windows Hello did not show the secret.")
-            return
-        self.revealed_id = entry_id
-        self.selected_id = entry_id
-        self._render_panel()
-        self._set_status("Secret shown until you leave it, lock Windows, or sleep.")
+            return False
+        return True
 
     def _watch_desktop(self) -> None:
         if self.root is None:
@@ -632,20 +1150,44 @@ class SignetApp:
         now = time.monotonic()
         slept = now - self._last_tick > 5
         self._last_tick = now
+        showing = self.revealed_id is not None or self._form_shown
         locked = False
-        if self.revealed_id is not None and not slept:
+        if showing and not slept:
             try:
                 locked = workstation_locked()
             except OSError:
                 locked = False
-        if self.revealed_id is not None and (slept or locked):
+        if showing and (slept or locked):
             self.revealed_id = None
-            self._render_panel()
+            self._form_shown = False
+            if self.form_secret is not None:
+                self.form_secret.configure(show="*")
+            elif self._mode == "entry":
+                self._render_panel()
             self._set_status("Secret hidden")
-        self.root.after(400, self._watch_desktop)
+        self._watch_job = self.root.after(400, self._watch_desktop)
 
 
-def _button(parent: tk.Misc, text: str, command, primary: bool = False) -> tk.Button:
+def _open_root() -> tk.Tk:
+    """Create the Tk root.
+
+    On this PC, destroying one interpreter and creating another can fail for
+    a moment with "couldn't read file init.tcl". The files are still there.
+    Tcl reports Windows error 0 while the previous interpreter lets them go.
+    A short retry gets past that. Opening Signet once does not hit it.
+    """
+    last: tk.TclError | None = None
+    for attempt in range(6):
+        try:
+            return tk.Tk()
+        except tk.TclError as exc:
+            last = exc
+            time.sleep(0.05 * (attempt + 1))
+    assert last is not None
+    raise last
+
+
+def _button(parent: tk.Misc, text: str, command, primary: bool = False, quiet: bool = False) -> tk.Button:
     if primary:
         return tk.Button(
             parent,
@@ -665,9 +1207,9 @@ def _button(parent: tk.Misc, text: str, command, primary: bool = False) -> tk.Bu
         text=text,
         command=command,
         bg=PANEL,
-        fg=TEXT,
+        fg=MUTED if quiet else TEXT,
         activebackground="#2a2a2a",
-        activeforeground=TEXT,
+        activeforeground=MUTED if quiet else TEXT,
         relief="flat",
         highlightthickness=1,
         highlightbackground=BORDER,

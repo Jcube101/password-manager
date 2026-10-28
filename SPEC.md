@@ -116,7 +116,7 @@ Byte layout (all multi-byte integers are **little-endian**):
 - Re-derive key from the (new or same) master + new salt.
 - Re-encrypt the current in-memory entries under the new parameters.
 
-**Signet saves are the exception.** A save made by Signet while it holds only the unwrapped vault key (§13) uses a **fresh nonce** and the **existing salt**. The key does not change, so the master password is not required. CLI saves still rotate the salt. A CLI save invalidates a previously wrapped key until the user types the master in Signet once.
+**Signet saves are the exception.** A save made by Signet while it holds only the unwrapped vault key (§13) uses a **fresh nonce** and the **existing salt**. The key does not change, so the master password is not required. Before writing, Signet checks that this key still decrypts the file. If it does not, Signet writes nothing and asks for the master password. CLI saves still rotate the salt. A CLI save invalidates a previously wrapped key until the user types the master in Signet once.
 
 ---
 
@@ -511,4 +511,4 @@ The window toolkit is an implementation choice. It must stay on this computer an
 Initial version: 2026-06-14  
 Updated 2026-08-16: added §7.0 landing page for bare `pwm` (PWM-R009).  
 Updated 2026-08-16: added §7.11 `pwm backup` (PWM-R007). Copies ciphertext only; no decrypt.  
-Updated 2026-10-28: added §13 Signet. The window uses the existing Windows Hello PIN. A PIN change in Windows needs nothing inside Signet. One Hello unlock lasts 24 hours. Launch is a Start menu shortcut, not `pwm`. The same day, Windows Hello on this PC returned a stable 32-byte PRF output (WebAuthn API 9). The sidecar format is implemented. A tkinter window shows the list, Copy, and the side panel. Create, Edit, Delete, the 24-hour clock, and the shortcut are not built yet.
+Updated 2026-10-28: added §13 Signet. The window uses the existing Windows Hello PIN. A PIN change in Windows needs nothing inside Signet. One Hello unlock lasts 24 hours. Launch is a Start menu shortcut, not `pwm`. The same day, Windows Hello on this PC returned a stable 32-byte PRF output (WebAuthn API 9). The sidecar format is implemented. A tkinter window shows the list, Copy, the side panel, Create, Edit, and Delete. A Signet save keeps the salt and uses a fresh nonce. The 24-hour clock and the shortcut are not built yet.

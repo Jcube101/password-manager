@@ -6,6 +6,24 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-10-28 — Signet can create, edit, and delete without the master password
+
+Create, Edit, and Delete are in the tkinter window. The 24-hour clock and the Start menu shortcut are still not built.
+
+A Signet save does not have the master password, so it cannot call `Vault.save`. That path runs `encrypt_vault`, which mints a new salt and would make the sidecar's wrapped key useless. `save_unlocked` calls `reencrypt_vault_with_key`: same salt, same 32-byte vault key, fresh nonce. AES-GCM allows key reuse only when every nonce is new. The vault document's `created_at` is copied from the unlocked plaintext so a Signet save does not pretend the vault was created today.
+
+The session keeps the PRF output in memory, next to the vault key. A save rewrites the sidecar with that output: same credential id, same PRF salt, fresh nonce. It does not ask Hello again. View asks Hello, checks that the new PRF output unwraps the sidecar, then throws that output away. It must not replace the session PRF, or a later save would wrap the key with a secret the next unlock does not use. Close, a cancelled Hello, and the master-password screen drop both the vault key and the PRF output. Python still will not zero that memory. The PRF output is never written except as the wrapping key inside the sidecar.
+
+The vault is written first. The key did not change, so if the sidecar rewrite fails the previous sidecar still unwraps the file. The window says the Hello file was not refreshed and still shows the saved entries.
+
+That order is safe only when the key in memory still opens the file. `pwm add` and the other CLI saves call `encrypt_vault`, which mints a new salt and a new key. If Signet then wrote its old entries under the new salt with the old key, the master password would no longer open the vault, and Signet could not repair it because it does not have the master. `save_unlocked` decrypts the file with the session key first. On failure it raises `VaultChangedError` and writes neither the vault nor the sidecar. The window drops the stale session and asks for the master password. That unlock derives the new key and Hello wraps it, which is the same recovery as opening Signet after a CLI save.
+
+Empty labels are rejected. A duplicate label uses the same message as the CLI. Delete removes the entry only when the typed text equals the label, including case. Tags are split on commas and whitespace, in order, without duplicates. Blank username, URL, and notes are stored as null. An empty secret is allowed. Generate calls `generate_password()` with no arguments, so it is the `pwm generate` default: 20 characters, symbols on. The create form shows the secret until save. The edit form keeps it masked unless View already revealed it, the user presses View, or Generate fills a new one. Filter and sort rebuild the list and leave an open form alone. Save, edit, and delete do not call Hello.
+
+On this PC, creating a second Tk interpreter immediately after destroying one can fail with "couldn't read file init.tcl" even though the file is there. Tcl reports Windows error 0 while the previous interpreter releases the library files. `_open_root` retries for about a second. Opening Signet once does not hit it. The tests do, because each window test creates and destroys a root.
+
+---
+
 ## 2026-10-28 — Signet’s first window is tkinter
 
 The window toolkit is tkinter, which already ships with this Python. PySide6 is not installed, and adding it would be a large dependency for a window whose colors are a handful of hex values. Tkinter opens a normal window on this PC. It does not listen on a port and it does not open a browser.

@@ -40,6 +40,22 @@ DEFAULT_VAULT_FILENAME = "vault"
 BACKUP_DIR_ENV = "PWM_BACKUP_DIR"
 
 
+def atomic_write(path: Path, blob: bytes) -> None:
+    """Write bytes atomically: sibling ``.tmp``, flush, then replace.
+
+    CLI saves and Signet saves both use this. The encryption is chosen
+    by the caller. This function does not know the master password.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "wb") as handle:
+        handle.write(blob)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, path)
+
+
 def get_default_vault_path() -> Path:
     """Return the platform-correct location for the vault file."""
     data_dir = platformdirs.user_data_dir(DEFAULT_APP_NAME)
@@ -141,17 +157,7 @@ class Vault:
 
     def _atomic_write(self, blob: bytes) -> None:
         """Write blob to disk atomically using a sibling .tmp file."""
-        self.vault_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.vault_path.with_suffix(self.vault_path.suffix + ".tmp")
-
-        # Write + flush
-        with open(tmp_path, "wb") as f:
-            f.write(blob)
-            f.flush()
-            os.fsync(f.fileno())
-
-        # Atomic replace (works on Windows and POSIX when on same filesystem)
-        os.replace(tmp_path, self.vault_path)
+        atomic_write(self.vault_path, blob)
 
     def save(self) -> None:
         """Serialize current in-memory state and write an encrypted blob."""
