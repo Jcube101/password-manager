@@ -58,13 +58,14 @@ The direction for the next surface. The window is named **Signet**. The CLI comm
 - PWM-R001 is the same pain (typing the master every time) and a different mechanism (OS keyring / DPAPI). Do not implement R001 as the desktop unlock.
 - PWM-R004 stays the CLI ticket for fuzzy search and folders. This window uses the tags that already exist, plus filter and sort.
 - PWM-R101 (terminal UI) and PWM-R102 (local web viewer) are other surfaces. They are not this ticket.
+- PWM-R111 is a later phone client for this same vault. Do not make the vault openable only by this laptop's Hello. The master password must keep opening the file anywhere.
 - PWM-R002 is TOTP. The user used "token" to mean a personal access token, which is a secret string in the existing password field.
 
 **Acceptance**
 
 - The same vault file opens in the CLI with the master and in the window with the PIN after enrollment.
 - A wrong PIN shows no entries.
-- Sleep or Win+L hides the entries until the PIN again.
+- Sleep or Win+L covers a revealed secret. The 24-hour unlock stays. See SPEC.md §13.3.
 - Copy does not print the secret. View prints it only after a second Hello prompt.
 - A pasted API key round-trips through `pwm get` and `pwm copy` with the master.
 
@@ -124,12 +125,37 @@ The direction for the next surface. The window is named **Signet**. The CLI comm
 
 - PWM-R100: Migrate storage layer to encrypted SQLite (sqlcipher or a simple whole-file encrypted SQLite) while keeping the same crypto primitives and in-memory `Entry` model.
 - PWM-R101: Optional TUI mode using `textual` (still local, same vault format). Not the answer to the 2026-10-28 UX rework. That is PWM-R110, a desktop window.
-- PWM-R102: Minimal read-only web viewer (FastAPI + HTMX or static) that can open the vault file when given the master (again, same crypto). A hosted site was rejected for R110. This ticket remains a different, local, read-only idea.
+- PWM-R102: Minimal read-only web viewer (FastAPI + HTMX or static) that can open the vault file when given the master (again, same crypto). A hosted site was rejected for R110. This ticket remains a different, local, read-only idea. A phone client is PWM-R111, not this ticket.
 - PWM-R103: Multi-vault support (`pwm use personal`, `pwm use work`).
 - PWM-R104: Audit log of operations (append-only, still inside the encrypted vault or sidecar).
 - PWM-R105: Formal property-based tests for the crypto roundtrips and serialization invariants (Hypothesis).
 - PWM-R106: Packaging as a single-file executable (PyInstaller, Nuitka, or `briefcase`) for non-Python users.
 - PWM-R107: First-class Windows installer / Scoop / winget manifest.
+- PWM-R111: Phone access to the same vault, later. Not part of Signet. Do not start it while PWM-R110 is unbuilt.
+
+### PWM-R111: Phone client for the same vault (later, not started)
+
+The user wants to open this vault from their phone someday. The phone has a fingerprint. The laptop does not. This ticket is a direction constraint on Signet, not work to start now.
+
+**What must stay true while Signet is built**
+
+- The PWM1 file plus the master password opens the vault on any device. Hello on the laptop is a local convenience. A phone enrolls its own unlock later, after the master is typed on the phone once. The `.signet` sidecar does not travel.
+
+**How the user expects to host it**
+
+- Not an open website. A progressive web app, or the same idea, served from their Raspberry Pi on a subdomain they control. Cloudflare Access (zero trust) in front, as they already do for other projects. The phone reaches the Pi. The Pi is not the place the secrets are decrypted.
+
+**The packet rule**
+
+- TLS, Cloudflare, and zero trust decide who can connect and they encrypt the connection. They are not the vault encryption. Anything that crosses the network, including what the Pi stores and what Cloudflare can see if it terminates TLS, must be the PWM1 ciphertext (or an equally encrypted blob). A captured packet must not contain the master password, entry plaintext, or the unwrapped vault key. The phone decrypts locally, after the file has arrived, with the master or with a fingerprint wrap that was created on that phone.
+
+**The limit of that rule**
+
+- Ciphertext on the wire does not protect a master password typed into a page the Pi just served. If the Pi or Cloudflare is compromised, it can serve different JavaScript that sends the master elsewhere the next time it is typed. The ticket has to treat the app bundle as trusted code, not only the packets as opaque. How that trust is pinned is undecided. Do not solve it by decrypting on the Pi.
+
+**Out of scope until Signet exists**
+
+- Sync design, the phone UI, Argon2 in the browser, and fingerprint enrollment. No SPEC change for this ticket yet.
 
 ---
 
@@ -138,7 +164,7 @@ The direction for the next surface. The window is named **Signet**. The CLI comm
 - Always re-evaluate security impact. Many of these (keyring, TOTP, import) increase surface area.
 - Keep the "educational first" spirit: each new feature should come with clear explanations in code comments and LEARNINGS.md.
 
-Current as of 2026-10-28. v1 core is complete. PWM-R009 (landing page) and PWM-R007 (`pwm backup`) shipped — see "Recently shipped" below. 35 automated tests passing. PWM-R110 is Signet. The contract is SPEC.md §13. Not implemented. The CLI command stays `pwm`. Daily unlock is the existing Windows Hello PIN, and one unlock lasts 24 hours. Signet will be started from the Start menu, not by typing `pwm`.
+Current as of 2026-10-28. v1 core is complete. PWM-R009 (landing page) and PWM-R007 (`pwm backup`) shipped — see "Recently shipped" below. 35 automated tests passing. PWM-R110 is Signet. The contract is SPEC.md §13. Not implemented. The CLI command stays `pwm`. Daily unlock is the existing Windows Hello PIN, and one unlock lasts 24 hours. Signet will be started from the Start menu, not by typing `pwm`. PWM-R111 records a later phone client on the user's Pi. The network carries ciphertext only. It is not started.
 
 ---
 

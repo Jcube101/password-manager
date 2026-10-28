@@ -6,6 +6,16 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-10-28 — A later phone client must see ciphertext only (PWM-R111)
+
+The user may want the vault on their phone later. It would be a progressive web app served from their Raspberry Pi, behind Cloudflare Access, on a subdomain they already know how to protect. That is not Signet, and it is not a reason to change the vault format.
+
+TLS and zero trust are the front door. They are not the vault encryption. Packets, the Pi's disk, and anything Cloudflare can see at the TLS boundary must be PWM1 ciphertext. The master, entry plaintext, and the unwrapped key stay off that path. The phone decrypts locally. A stolen packet is then still an encrypted vault.
+
+That rule does not cover a compromised app bundle. If the Pi serves the page, a compromised Pi can serve JavaScript that exfiltrates the master the next time it is typed. Recorded so a future build does not treat Cloudflare as a substitute for decrypting on the phone. No SPEC change. No code.
+
+---
+
 ## 2026-10-28 — User accepted the 24-hour unlock and the click-to-start
 
 The user said the PIN-change behavior, the 24-hour Hello unlock, and launching Signet from a shortcut (not from `pwm`) look good. SPEC.md §13 is the contract they accepted. No Signet code yet.
