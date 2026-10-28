@@ -1,6 +1,7 @@
 """Signet window behavior. These tests do not call Windows Hello."""
 
 import json
+import time
 
 import pytest
 
@@ -12,7 +13,7 @@ from pwm.crypto import (
     encrypt_vault,
     get_header_info,
 )
-from pwm.hello import assert_layout
+from pwm.hello import HelloCancelled, assert_layout
 from pwm.models import Entry
 from pwm.sidecar import (
     build_sidecar,
@@ -23,6 +24,7 @@ from pwm.sidecar import (
 )
 from pwm.signet import (
     MASK,
+    UNLOCK_SECONDS,
     SignetApp,
     VaultChangedError,
     add_entry,
@@ -32,6 +34,7 @@ from pwm.signet import (
     parse_tags,
     replace_entry,
     save_unlocked,
+    session_expired,
     sort_entries,
 )
 
@@ -327,6 +330,70 @@ def test_edit_keeps_the_secret_masked_and_delete_needs_the_label(tmp_path, monke
         assert app.entries == []
         assert json.loads(decrypt_vault(path.read_bytes(), "pw")[0])["entries"] == []
         assert get_header_info(path.read_bytes())["salt_hex"] == info["salt_hex"]
+    finally:
+        app.close()
+
+
+def test_session_clock_is_twenty_four_wall_clock_hours():
+    start = 1_700_000_000.0
+    assert UNLOCK_SECONDS == 24 * 60 * 60
+    assert not session_expired(start, start + UNLOCK_SECONDS - 1)
+    assert session_expired(start, start + UNLOCK_SECONDS)
+
+
+def test_activity_does_not_extend_the_clock_and_expiry_asks_hello(tmp_path, monkeypatch):
+    mail = Entry(id="1", label="Mail", password="secret")
+    app, path, _info = _open_unlocked(tmp_path, monkeypatch, [mail])
+    try:
+        copied: list[str] = []
+        monkeypatch.setattr("pwm.signet.copy_to_clipboard", lambda text: copied.append(text))
+        started = app._unlocked_at
+        assert started is not None
+        app.copy_entry("1")
+        assert copied == ["secret"]
+        assert app._unlocked_at == started
+        app._unlocked_at = time.time() - (UNLOCK_SECONDS - 30)
+        assert app._ensure_unlocked() is True
+        assert app.vault_key is not None
+
+        asked: list[str] = []
+
+        def cancel(*_args, **_kwargs):
+            asked.append("hello")
+            raise HelloCancelled
+
+        monkeypatch.setattr("pwm.signet.evaluate", cancel)
+        before = path.read_bytes()
+        app._unlocked_at = time.time() - UNLOCK_SECONDS
+        assert app._ensure_unlocked() is False
+        assert app.root is not None
+        app.root.update()
+        assert asked == ["hello"]
+        assert app.vault_key is None
+        assert app.prf_output is None
+        assert app.entries == []
+        assert app._unlocked_at is None
+        assert app.master_entry is None
+        assert path.read_bytes() == before
+        assert any("cancelled" in text.casefold() for text in _texts(app.root))
+    finally:
+        app.close()
+        assert app.vault_key is None
+        assert app._unlocked_at is None
+
+
+def test_sleep_covers_a_revealed_secret_and_keeps_the_session(tmp_path, monkeypatch):
+    mail = Entry(id="1", label="Mail", password="secret")
+    app, _path, _info = _open_unlocked(tmp_path, monkeypatch, [mail])
+    try:
+        started = app._unlocked_at
+        app.revealed_id = mail.id
+        app._last_tick = time.monotonic() - 30
+        app._watch_desktop()
+        assert app.revealed_id is None
+        assert app.vault_key is not None
+        assert app._unlocked_at == started
+        assert app.entries[0].password == "secret"
     finally:
         app.close()
 

@@ -21,7 +21,7 @@ Items required to ship a useful, secure, educational v1 CLI are being executed n
 
 The direction for the next surface. The window is named **Signet**. The CLI command stays `pwm`. The contract is SPEC.md §13. The sidecar and the tkinter window are in the tree. Mockups from that session live in `.superpowers/brainstorm/` (gitignored).
 
-**In progress.** The sidecar and a tkinter window are written. The window lists entries, copies a secret, and opens a side panel. Create, Edit, and Delete save with the vault key already in memory: the salt stays and the nonce is fresh. The 24-hour clock and the Start menu shortcut are not built yet.
+**In progress.** The sidecar and a tkinter window are written. The window lists entries, copies a secret, and opens a side panel. Create, Edit, and Delete save with the vault key already in memory: the salt stays and the nonce is fresh. A Hello unlock lasts 24 wall-clock hours. The Start menu shortcut is not built yet.
 
 **Why.** The v1 CLI works. Day to day it is hard to reach because it lives in a terminal, the master password is typed on every command, and there is no place to look at labels. Conversation on 2026-10-28 settled a second surface. The CLI stays. The vault file stays. The crypto stays Argon2id + AES-256-GCM. This is not a hosted website, not a browser extension, and not the TUI in PWM-R101.
 
@@ -51,7 +51,7 @@ The direction for the next surface. The window is named **Signet**. The CLI comm
 
 **Open**
 
-- Nothing the user still has to choose. The on-machine PRF check passed. The sidecar format is implemented. A tkinter window shows the list, Copy, the side panel, Create, Edit, and Delete. The 24-hour clock and the shortcut are not built yet.
+- Nothing the user still has to choose. The on-machine PRF check passed. The sidecar format is implemented. A tkinter window shows the list, Copy, the side panel, Create, Edit, and Delete. A Hello unlock lasts 24 wall-clock hours. The shortcut is not built yet.
 
 **Related tickets, and what not to build instead**
 
@@ -164,7 +164,7 @@ The user wants to open this vault from their phone someday. The phone has a fing
 - Always re-evaluate security impact. Many of these (keyring, TOTP, import) increase surface area.
 - Keep the "educational first" spirit: each new feature should come with clear explanations in code comments and LEARNINGS.md.
 
-Current as of 2026-10-28. v1 core is complete. PWM-R009 (landing page) and PWM-R007 (`pwm backup`) shipped — see "Recently shipped" below. 55 automated tests passing. PWM-R110 is Signet. The contract is SPEC.md §13. The sidecar format is implemented. A tkinter window shows the list, Copy, the side panel, Create, Edit, and Delete. The 24-hour clock and the shortcut are not built yet. The Hello PRF check passed on this PC on 2026-10-28. The CLI command stays `pwm`. Daily unlock is the existing Windows Hello PIN. Until the shortcut exists, start the window with `python -m pwm.signet`. PWM-R111 records a later phone client on the user's Pi. The network carries ciphertext only. It is not started.
+Current as of 2026-10-28. v1 core is complete. PWM-R009 (landing page) and PWM-R007 (`pwm backup`) shipped — see "Recently shipped" below. 58 automated tests passing. PWM-R110 is Signet. The contract is SPEC.md §13. The sidecar format is implemented. A tkinter window shows the list, Copy, the side panel, Create, Edit, and Delete. A Hello unlock lasts 24 wall-clock hours. The shortcut is not built yet. The Hello PRF check passed on this PC on 2026-10-28. The CLI command stays `pwm`. Daily unlock is the existing Windows Hello PIN. Until the shortcut exists, start the window with `python -m pwm.signet`. PWM-R111 records a later phone client on the user's Pi. The network carries ciphertext only. It is not started.
 
 ---
 

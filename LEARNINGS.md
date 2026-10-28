@@ -6,6 +6,16 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-10-28 — The Signet session lasts 24 wall-clock hours
+
+The clock starts when Hello succeeds and the list is shown (`_enter`). Copy, View, Create, Edit, Delete, and filtering do not move it. There is no countdown.
+
+The deadline is `time.time()` plus 24 hours. Sleep, closing the lid, and the Windows lock do not end the session. `time.monotonic()` does not move while Windows is suspended, so a weekend with the laptop asleep would have stayed unlocked for longer than a day. The wall clock includes that time. Waking after three hours continues the same session. Waking after twenty-five hours asks for the laptop PIN again. Covering a revealed secret is separate and still happens when the UI timer jumps or `OpenInputDesktop` fails.
+
+Nothing about the deadline is written down. Quitting Signet drops the vault key and the PRF output, so the next launch asks Hello again even if the previous window had time left. When the 24 hours pass inside an open window, Signet clears the list and the key, leaves the vault file and the sidecar untouched, and asks Hello. It does not ask for the master password unless Hello cannot open the sidecar. A cancelled Hello shows no entries.
+
+---
+
 ## 2026-10-28 — Signet can create, edit, and delete without the master password
 
 Create, Edit, and Delete are in the tkinter window. The 24-hour clock and the Start menu shortcut are still not built.

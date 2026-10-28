@@ -1,8 +1,8 @@
 """
 Signet window.
 
-The list, Copy, the side panel, and Create, Edit, and Delete. The 24-hour
-clock and the Start menu shortcut are not in this slice. Typing ``pwm``
+The list, Copy, the side panel, Create, Edit, and Delete, and the 24-hour
+unlock. The Start menu shortcut is not in this slice. Typing ``pwm``
 does not open this window.
 Launch with ``python -m pwm.signet``.
 
@@ -57,6 +57,19 @@ BRASS = "#d6a25e"
 BRASS_INK = "#1a140c"
 SELECTED = "#2a241c"
 MASK = "••••••••••••"
+UNLOCK_SECONDS = 24 * 60 * 60
+
+
+def session_expired(started_at: float, now: float) -> bool:
+    """True when 24 wall-clock hours have passed since Hello unlock.
+
+    ``started_at`` and ``now`` are ``time.time()`` values. Sleep, lid close,
+    and the Windows lock do not end the session by themselves. A monotonic
+    clock pauses while Windows is suspended, so it would let a closed laptop
+    stay unlocked for longer than a day of real time. Clicks do not move
+    ``started_at``. Quitting the window drops it, and nothing writes it down.
+    """
+    return now - started_at >= UNLOCK_SECONDS
 
 
 def entries_from_plaintext(plaintext: bytes) -> list[Entry]:
@@ -299,9 +312,12 @@ class SignetApp:
         self._mode = "entry"
         self._form_shown = False
         self._filter: tk.StringVar | None = None
+        self._filter_trace: str | None = None
         self._sort: tk.StringVar | None = None
         self._tag = "All"
         self._last_tick = time.monotonic()
+        self._unlocked_at: float | None = None
+        self._expiring = False
         self._watch_job: str | None = None
         self._list_inner: tk.Frame | None = None
         self._secret_value: tk.Label | None = None
@@ -375,6 +391,7 @@ class SignetApp:
         self.created_at = None
         self.revealed_id = None
         self._form_shown = False
+        self._unlocked_at = None
         if self.root is not None:
             if self._watch_job is not None:
                 try:
@@ -421,6 +438,7 @@ class SignetApp:
         self.created_at = None
         self.revealed_id = None
         self._mode = "entry"
+        self._unlocked_at = None
         assert self.body is not None
         wrap = tk.Frame(self.body, bg=BG)
         wrap.pack(anchor="w", padx=28, pady=28)
@@ -453,6 +471,7 @@ class SignetApp:
         self.created_at = None
         self.revealed_id = None
         self._mode = "entry"
+        self._unlocked_at = None
         assert self.body is not None
         wrap = tk.Frame(self.body, bg=BG)
         wrap.pack(anchor="w", padx=28, pady=28)
@@ -624,6 +643,7 @@ class SignetApp:
         self.revealed_id = None
         self._mode = "entry"
         self._form_shown = False
+        self._unlocked_at = time.time()
         self._tag = "All"
         self.show_list()
 
@@ -651,7 +671,9 @@ class SignetApp:
             highlightcolor=BRASS,
         )
         filter_box.pack(side="left", fill="x", expand=True, ipady=6)
-        self._filter.trace_add("write", lambda *_args: self.refresh_rows())
+        if self._filter_trace is not None:
+            self._filter.trace_remove("write", self._filter_trace)
+        self._filter_trace = self._filter.trace_add("write", lambda *_args: self.refresh_rows())
         _button(tools, "Create new", self.start_create, primary=True).pack(side="right", padx=(8, 0))
         sort = tk.OptionMenu(tools, self._sort, "Label", "Username", command=lambda _value: self.refresh_rows())
         sort.configure(bg=PANEL, fg=MUTED, activebackground=PANEL, relief="flat", highlightthickness=0)
@@ -685,6 +707,9 @@ class SignetApp:
 
     def refresh_rows(self) -> None:
         if self._list_inner is None:
+            return
+        if not self._expiring and self._session_is_over():
+            self._later(self._expire_session)
             return
         for child in self._list_inner.winfo_children():
             child.destroy()
@@ -756,6 +781,8 @@ class SignetApp:
             child.bind("<Button-1>", select)
 
     def select(self, entry_id: str) -> None:
+        if not self._ensure_unlocked():
+            return
         if entry_id != self.revealed_id:
             self.revealed_id = None
         self.selected_id = entry_id
@@ -822,17 +849,23 @@ class SignetApp:
         _button(actions, "Delete", self.start_delete, quiet=True).pack(side="left", padx=(8, 0))
 
     def start_create(self) -> None:
+        if not self._ensure_unlocked():
+            return
         self._mode = "create"
         self.revealed_id = None
         self._later(self._render_panel)
 
     def start_edit(self) -> None:
+        if not self._ensure_unlocked():
+            return
         if self._selected() is None:
             return
         self._mode = "edit"
         self._later(self._render_panel)
 
     def start_delete(self) -> None:
+        if not self._ensure_unlocked():
+            return
         if self._selected() is None:
             return
         self._mode = "delete"
@@ -938,6 +971,8 @@ class SignetApp:
         self._set_status(text)
 
     def fill_generated(self) -> None:
+        if not self._ensure_unlocked():
+            return
         if self.form_secret is None:
             return
         self.form_secret.delete(0, "end")
@@ -946,6 +981,8 @@ class SignetApp:
         self._form_shown = True
 
     def reveal_form_secret(self) -> None:
+        if not self._ensure_unlocked():
+            return
         if self.form_secret is None:
             return
         if self._form_shown:
@@ -980,6 +1017,8 @@ class SignetApp:
         )
 
     def save_form(self) -> None:
+        if not self._ensure_unlocked():
+            return
         if self.vault_key is None or not self.created_at:
             self._show_form_error("Unlock the vault before saving.")
             return
@@ -1043,6 +1082,8 @@ class SignetApp:
         _button(actions, "Cancel", self.cancel_form).pack(side="left", padx=(8, 0))
 
     def confirm_delete(self) -> None:
+        if not self._ensure_unlocked():
+            return
         entry = self._selected()
         if entry is None or self.form_confirm is None:
             return
@@ -1100,6 +1141,8 @@ class SignetApp:
         return label
 
     def copy_entry(self, entry_id: str) -> None:
+        if not self._ensure_unlocked():
+            return
         entry = next((item for item in self.entries if item.id == entry_id), None)
         if entry is None or self.vault_key is None:
             return
@@ -1107,6 +1150,8 @@ class SignetApp:
         self._set_status(f"Copied {entry.label}")
 
     def view_entry(self, entry_id: str) -> None:
+        if not self._ensure_unlocked():
+            return
         if self.revealed_id == entry_id:
             self.revealed_id = None
             self._render_panel()
@@ -1144,8 +1189,56 @@ class SignetApp:
             return False
         return True
 
+    def _session_is_over(self) -> bool:
+        if self.vault_key is None or self._unlocked_at is None:
+            return False
+        return session_expired(self._unlocked_at, time.time())
+
+    def _ensure_unlocked(self) -> bool:
+        """False when this window has no vault key or the 24 hours have passed.
+
+        A still-valid session is returned as-is. The deadline is not moved.
+        """
+        if self.vault_key is None or self._unlocked_at is None:
+            return False
+        if not session_expired(self._unlocked_at, time.time()):
+            return True
+        self._later(self._expire_session)
+        return False
+
+    def _expire_session(self) -> None:
+        """Drop the key and ask Hello again. The master password is not the next step."""
+        if self._expiring or self.vault_key is None:
+            return
+        self._expiring = True
+        try:
+            self.entries = []
+            self.vault_key = None
+            self.prf_output = None
+            self.created_at = None
+            self.revealed_id = None
+            self._form_shown = False
+            self._unlocked_at = None
+            self._mode = "entry"
+            self._clear_body()
+            assert self.body is not None
+            tk.Label(
+                self.body,
+                text="24 hours have passed. Signet needs the laptop PIN again.",
+                bg=BG,
+                fg=TEXT,
+            ).pack(anchor="w", padx=28, pady=28)
+            self.hello_unlock()
+        finally:
+            self._expiring = False
+
     def _watch_desktop(self) -> None:
         if self.root is None:
+            return
+        if not self._expiring and self._session_is_over():
+            self._expire_session()
+            if self.root is not None:
+                self._watch_job = self.root.after(400, self._watch_desktop)
             return
         now = time.monotonic()
         slept = now - self._last_tick > 5
