@@ -423,9 +423,9 @@ This SPEC is the single source of truth for v1 implementation. When the build is
 
 Signet is a local desktop window on this PC. It reads and writes the same vault file as `pwm`. The command name stays `pwm`. Typing `pwm` does not open Signet. Signet is not a hosted website, not a browser extension, and not a terminal UI.
 
-You start Signet by clicking it. The install puts a Start menu entry and a desktop shortcut, both named Signet. Today that program does not exist yet. Until it is built, the only way in is the `pwm` command in a terminal.
+You start Signet by clicking it. The Start menu Programs folder and the desktop each have a shortcut named Signet. Both run `pythonw.exe -m pwm.signet` from the virtual environment that created them. `pythonw.exe` opens the window with no console. The shortcuts pass no vault path, so the vault is the default file from §4. Recreate them with `python -m pwm.shortcut` after that environment moves. From a terminal, `python -m pwm.signet` opens the same window. `python -m pwm` stays the command-line tool.
 
-No code is required by this section until implementation starts. The behavior below is the contract.
+The behavior below is the contract.
 
 ### 13.1 Unlock
 
@@ -511,4 +511,4 @@ The window toolkit is an implementation choice. It must stay on this computer an
 Initial version: 2026-06-14  
 Updated 2026-08-16: added §7.0 landing page for bare `pwm` (PWM-R009).  
 Updated 2026-08-16: added §7.11 `pwm backup` (PWM-R007). Copies ciphertext only; no decrypt.  
-Updated 2026-10-28: added §13 Signet. The window uses the existing Windows Hello PIN. A PIN change in Windows needs nothing inside Signet. One Hello unlock lasts 24 hours. Launch is a Start menu shortcut, not `pwm`. The same day, Windows Hello on this PC returned a stable 32-byte PRF output (WebAuthn API 9). The sidecar format is implemented. A tkinter window shows the list, Copy, the side panel, Create, Edit, and Delete. A Signet save keeps the salt and uses a fresh nonce. A Hello unlock lasts 24 wall-clock hours, is not extended by clicks, and is not ended by sleep or the Windows lock. Quitting ends it. The shortcut is not built yet.
+Updated 2026-10-28: added §13 Signet. The window uses the existing Windows Hello PIN. A PIN change in Windows needs nothing inside Signet. One Hello unlock lasts 24 hours. Launch is a Start menu shortcut, not `pwm`. The same day, Windows Hello on this PC returned a stable 32-byte PRF output (WebAuthn API 9). The sidecar format is implemented. A tkinter window shows the list, Copy, the side panel, Create, Edit, and Delete. A Signet save keeps the salt and uses a fresh nonce. A Hello unlock lasts 24 wall-clock hours, is not extended by clicks, and is not ended by sleep or the Windows lock. Quitting ends it. The Start menu Programs folder and the desktop each have a shortcut named Signet, created by `python -m pwm.shortcut`. Both run `pythonw.exe -m pwm.signet`.

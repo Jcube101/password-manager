@@ -89,6 +89,18 @@ pip install -e ".[dev]"
 
 Editable installs also bake in the old project path (`__editable__.pwm-0.1.0.pth`). A moved `.venv` will then say `No module named pwm` until you reinstall.
 
+## Open Signet
+
+Signet is the desktop window for the same vault. Click **Signet** on the Start menu or the desktop. Typing `pwm` still opens the command-line tool.
+
+Create or refresh those two shortcuts from this repository:
+
+```powershell
+.\.venv\Scripts\python.exe -m pwm.shortcut
+```
+
+Each shortcut runs `pythonw.exe -m pwm.signet` from this virtual environment, so the window opens with no console. The shortcut stores that path. After you move the repository or recreate `.venv`, run the command again. From a terminal, `python -m pwm.signet` opens the same window.
+
 ## Daily command cheat sheet
 
 Every command that reads or writes secrets will prompt `Master password:` and show a spinner while Argon2 runs. `generate` and `info` do **not** need the vault.

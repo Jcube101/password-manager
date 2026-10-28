@@ -2,9 +2,10 @@
 Signet window.
 
 The list, Copy, the side panel, Create, Edit, and Delete, and the 24-hour
-unlock. The Start menu shortcut is not in this slice. Typing ``pwm``
-does not open this window.
-Launch with ``python -m pwm.signet``.
+unlock. Typing ``pwm`` does not open this window.
+Click Signet on the Start menu or the desktop. Those shortcuts are created
+with ``python -m pwm.shortcut`` and run ``pythonw.exe -m pwm.signet``.
+From a terminal, launch with ``python -m pwm.signet``.
 
 The toolkit is tkinter. It is a normal window on this PC. It does not open
 a port and it does not open a browser.

@@ -6,6 +6,18 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-10-28 — Signet is a Start menu shortcut and a desktop shortcut
+
+Clicking Signet opens the window. Typing `pwm` still runs the command-line tool. There is no `signet` console script and no `pwm` subcommand that opens the window. A setuptools `signet.exe` would store the absolute path to `python.exe` from install time and die with `Fatal error in launcher` after the repository or `.venv` moves. The same trap is why the README tells people to call `python.exe -m pwm` instead of `pwm.exe`.
+
+The shortcuts run `pythonw.exe -m pwm.signet`. `pythonw.exe` sits beside `python.exe` in `.venv\Scripts` and opens no console. The working directory is the repository when that interpreter lives in `<repo>/.venv`. The `.lnk` stores those absolute paths. After a move, or after recreating the virtual environment, run `python -m pwm.shortcut` again. That command writes the shortcuts and does not open the window. The shortcuts pass no vault path, so Signet uses the default vault.
+
+The folders come from `SHGetKnownFolderPath`, not from a guessed path. `FOLDERID_Desktop` (`B4BFCC3A-DB2C-424C-B029-7FE99A87C641`) follows this PC's OneDrive desktop. `FOLDERID_Programs` (`A77F5D77-2E2B-44C3-A6A2-ABA601054A51`) is `%APPDATA%\Microsoft\Windows\Start Menu\Programs`, which Start search and All apps list. `FOLDERID_StartMenu` (`625B53C3-AB48-4EC1-BA1F-A1EF4146FC19`) is the parent folder. A shortcut there does not show up as an app. The first write used that parent id. It was removed after the Programs shortcut was in place.
+
+The icon is drawn in code: a 16×16 and 32×32 Ink seal with a brass ring, written as `Signet.ico` next to the Start menu shortcut. Both shortcuts point at that file, so the Start menu does not show the Python logo. The `.lnk` files are per machine and are not committed. Tests pass temporary folders and a fake `pythonw.exe`. They read the shortcut fields back through Windows Script Host and do not launch them.
+
+---
+
 ## 2026-10-28 — The Signet session lasts 24 wall-clock hours
 
 The clock starts when Hello succeeds and the list is shown (`_enter`). Copy, View, Create, Edit, Delete, and filtering do not move it. There is no countdown.
