@@ -6,6 +6,70 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-10-28 — User accepted the 24-hour unlock and the click-to-start
+
+The user said the PIN-change behavior, the 24-hour Hello unlock, and launching Signet from a shortcut (not from `pwm`) look good. SPEC.md §13 is the contract they accepted. No Signet code yet.
+
+---
+
+## 2026-10-28 — 24-hour Signet unlock, and a PIN change needs nothing from the user
+
+The user does not want Hello every 5 minutes. SPEC §13.3 now says one Hello unlock lasts 24 hours, starting at that unlock, not extended by clicks. Sleep and the Windows lock do not end it. Windows itself may still ask for the laptop PIN on wake. Signet must not ask a second time inside those 24 hours. Quitting Signet locks it early. A secret shown with View still hides on sleep and on the Windows lock. The list comes back without Hello.
+
+A Windows PIN change does not notify Signet and does not need a step inside Signet. Signet never stored the digits. Windows asks for the new PIN at the next Hello prompt and still returns the same PRF output, as long as the passkey was not removed. Removing the PIN or clearing the TPM is the case that falls back to the master password.
+
+Launch, once built: Start menu and a desktop shortcut named Signet. Typing `pwm` stays the CLI and does not open the window. The program is not installed yet.
+
+---
+
+## 2026-10-28 — Signet is SPEC §13. The PIN is the laptop PIN
+
+The user confirmed Signet uses the Windows Hello PIN they already use to sign in. It is not a new PIN and it is not a 4-digit vault PIN. A normal Windows PIN change (old PIN known, new PIN set) keeps the passkey. Removing the PIN or clearing the TPM can destroy it. The master password is the recovery path. A 4-digit app PIN was refused because 10,000 guesses is too weak for a file that can be copied.
+
+Written into SPEC.md §13. Still no Signet code.
+
+Signet saves are an exception to "fresh salt on every save." The window holds the unwrapped vault key, not the master, and the master must never be written into the sidecar. A Signet save uses a fresh nonce and the existing salt. CLI saves still rotate the salt and then the sidecar no longer matches until the user types the master once. AES-GCM key reuse is safe only with a unique nonce. Do not "fix" Signet saves by rotating the salt unless the master is in memory for that operation.
+
+---
+
+## 2026-10-28 — Signet locks after 5 idle minutes
+
+The user agreed. Five minutes with no click or keypress in the Signet window locks it. Time spent in another app counts. Sleep and the Windows lock still lock it immediately. The key leaves memory and the list hides. Coming back is the Hello PIN. Recorded on PWM-R110. Still not in SPEC. No code.
+
+The Hello-wrapped vault key will live in a sidecar next to the vault, not in the header, so the CLI file format stays as it is. That storage choice is for the spec. It was not a separate question to the user.
+
+---
+
+## 2026-10-28 — Edit and Delete panels accepted
+
+The user looked at the open-entry buttons (Copy, View, Edit, and a quieter Delete) and the delete confirm that requires the label, and said they look good. Recorded on PWM-R110. Still not in SPEC. No code.
+
+---
+
+## 2026-10-28 — Edit and Delete on the open entry
+
+The user wants both on the Signet side panel. Edit uses the same fields as Create and does not reveal the secret. Delete asks for the label to be confirmed, then removes the entry. Neither asks for the Hello PIN again, because the window is already unlocked. Save and delete both rewrite the vault the way the CLI does. Recorded on PWM-R110. Still not in SPEC. No code.
+
+---
+
+## 2026-10-28 — View stays until you leave
+
+After the second Hello PIN, the secret stays on the open entry until the user leaves it or the window locks. Leaving means another row, closing the panel, or pressing View again. Sleep, Windows lock, and idle lock cover it too. No countdown. The list never shows it. The user agreed. Recorded on PWM-R110. Still not in SPEC. No code.
+
+---
+
+## 2026-10-28 — Create form accepted
+
+The user looked at the full side-panel form (label, username, secret, URL, notes, tags, Generate or paste, visible until save) and said it looks good. No length control. Recorded on PWM-R110. Still not in SPEC. No code.
+
+---
+
+## 2026-10-28 — Create new lives in the side panel
+
+The user chose option A. Create new does not cover the list and does not start with a "password or token?" step. The list stays, and the side panel becomes a blank entry. One form for a password, a personal access token, or an API key. Fields on that form: label, username, secret, URL, notes, tags. Generate fills the secret, or the user pastes one. The secret is visible while creating and hides after save. Generate follows `pwm generate` defaults (20 characters, symbols on). Still not in SPEC. No code.
+
+---
+
 ## 2026-10-28 — Signet, in Ink
 
 The desktop window's display name is Signet. The CLI command stays `pwm`. Do not rename the console script. Color is Ink: near-black surfaces, warm off-white text, a single brass accent. Chosen over Paper, Tide, and Clay, and over the names Coffer, Latch, and Folio. Recorded on PWM-R110. Still not in SPEC. No code.

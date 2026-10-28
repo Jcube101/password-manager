@@ -4,6 +4,7 @@
 vault.json
 vault.enc
 *.key
+*.signet
 .env
 .env.local
 

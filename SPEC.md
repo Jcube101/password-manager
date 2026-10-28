@@ -6,7 +6,7 @@ It is precise enough that a competent developer (or subagent) can implement any 
 
 **If you need to change behavior described here, update this file first** (with date and rationale in LEARNINGS.md) and get explicit agreement before coding against the new contract.
 
-Current target: v1 (fully functional local CLI password manager).
+Current target: v1 CLI, plus the Signet desktop window in §13. The CLI contract in §§1–12 stays in force. §13 adds a second surface. It does not change the `pwm` command or the PWM1 vault layout.
 
 ---
 
@@ -14,7 +14,7 @@ Current target: v1 (fully functional local CLI password manager).
 
 - Everything is **local-only**. No network calls, no telemetry, no cloud sync in v1.
 - The **master password never leaves the user's head and is never written to disk** (plaintext or otherwise).
-- The on-disk artifact is **one encrypted file** (the "vault").
+- The vault ciphertext is **one encrypted file** in the PWM1 layout below. Signet may also write a sidecar next to it (§13). The sidecar is not required to open the vault with the master password. It must not contain the master password or entry plaintext.
 - All cryptography uses only well-audited libraries: `cryptography` (AES-GCM) and `argon2-cffi` (Argon2id). No custom primitives, no custom modes, no "simple XOR".
 - Every encryption operation uses a **fresh cryptographically random salt (16 bytes)** and a **fresh cryptographically random nonce (12 bytes)**.
 - Writes to the vault file are **atomic** (temp file + rename/replace).
@@ -111,10 +111,12 @@ Byte layout (all multi-byte integers are **little-endian**):
 - Encrypt an initial JSON with `"entries": []`.
 - Write the 42+ byte header + ciphertext atomically.
 
-**Re-encrypting** (any save, including `change-master`):
+**Re-encrypting** (any CLI save, including `change-master`):
 - Always generate **new** salt and **new** nonce.
 - Re-derive key from the (new or same) master + new salt.
 - Re-encrypt the current in-memory entries under the new parameters.
+
+**Signet saves are the exception.** A save made by Signet while it holds only the unwrapped vault key (§13) uses a **fresh nonce** and the **existing salt**. The key does not change, so the master password is not required. CLI saves still rotate the salt. A CLI save invalidates a previously wrapped key until the user types the master in Signet once.
 
 ---
 
@@ -351,6 +353,7 @@ Behavior:
   - Windows example: `C:\Users\<user>\AppData\Roaming\pwm\vault`
 - The directory is created on first write if it does not exist.
 - The vault file itself has no extension.
+- Signet's sidecar, when present, is the vault path plus `.signet` (a vault at `...\pwm\vault` uses `...\pwm\vault.signet`). See §13.
 - `--vault-path` overrides everything (the parent dir is used as-is; the filename is still "vault" unless an explicit file is given).
 - During tests we must be able to pass a temp path and never touch the real user dir.
 
@@ -359,7 +362,7 @@ Behavior:
 ## 9. Security & Operational Requirements
 
 - Derived key objects are deleted and garbage collected after use where practical (`del key; gc.collect()`).
-- No plaintext of entries or master ever written to disk except inside the correctly formatted encrypted vault.
+- No plaintext of entries or master ever written to disk except inside the correctly formatted encrypted vault. The Signet sidecar (§13) may hold the current vault key only inside AES-GCM, wrapped by a Windows Hello PRF output. It must not hold the master password, a PIN, or entry plaintext.
 - Clipboard usage is documented with its limitations (see LEARNINGS.md).
 - On first use or `init`, the tool should print a short "backup your vault file" reminder **and** that the master password is unrecoverable (write it on paper; a file copy is not enough).
 - The tool must continue to function if the user moves the vault file (via `--vault-path`).
@@ -414,6 +417,98 @@ All crypto tests must be runnable without a real TTY.
 
 This SPEC is the single source of truth for v1 implementation. When the build is complete, the final state of the code + tests must be consistent with (or an explicitly documented extension of) this document.
 
+---
+
+## 13. Signet (desktop window)
+
+Signet is a local desktop window on this PC. It reads and writes the same vault file as `pwm`. The command name stays `pwm`. Typing `pwm` does not open Signet. Signet is not a hosted website, not a browser extension, and not a terminal UI.
+
+You start Signet by clicking it. The install puts a Start menu entry and a desktop shortcut, both named Signet. Today that program does not exist yet. Until it is built, the only way in is the `pwm` command in a terminal.
+
+No code is required by this section until implementation starts. The behavior below is the contract.
+
+### 13.1 Unlock
+
+Daily unlock is the Windows Hello PIN **already used to sign in to this Windows account**. Signet does not create, store, or rotate a PIN. It does not offer a shorter PIN of its own. A 4-digit app PIN is out of scope and must not be added as a substitute for Hello.
+
+Windows Hello may accept a fingerprint or face instead of the PIN when those are enrolled on the laptop. That is the same Hello prompt, not a second credential.
+
+First trust, once:
+
+1. The user types the master password.
+2. Signet unlocks the vault with the existing Argon2id + AES-GCM path.
+3. Signet asks Windows to create a passkey on the platform authenticator (Windows Hello only), with user verification required and the PRF / hmac-secret extension enabled.
+4. A fresh 32-byte PRF salt is generated and stored in the sidecar. The PRF output wraps the **current 32-byte vault key**, not the master password.
+5. The master password is discarded from memory. It is never written to the sidecar.
+
+After that, opening Signet is the Hello prompt. Hello returns the PRF output. Signet unwraps the vault key and decrypts the vault. A cancelled or failed Hello prompt shows no entries.
+
+Signet never learns the PIN digits, so a Windows PIN change is not something the user configures inside Signet. Windows updates its own PIN. The passkey stays. The next Hello prompt asks for the new laptop PIN, and Signet receives the same unwrap secret as before. The user does nothing in Signet. Removing the PIN, or clearing the TPM, can destroy the passkey. Signet then asks for the master password, once, to enroll again.
+
+The master password remains the other way in: a new computer, a Windows reinstall, Hello failure, a missing sidecar, or a vault whose key no longer matches the sidecar (including after `pwm change-master` or any other CLI save that rotated the salt). The CLI keeps prompting for the master with `getpass`. A Drive copy of the vault still opens with the master that was current when that copy was made. The PRF secret does not travel with the file.
+
+### 13.2 Sidecar
+
+Path: the vault path plus `.signet`.
+
+The sidecar is local. It is gitignored with the vault. Copying it to another computer does not unlock the vault there.
+
+Byte layout, little-endian:
+
+| Offset | Length | Content |
+|--------|--------|---------|
+| 0 | 4 | Magic `b"SGN1"` |
+| 4 | 1 | Version `0x01` |
+| 5 | 2 | Credential id length (uint16) |
+| 7 | N | Credential id |
+| 7+N | 32 | PRF salt |
+| 39+N | 12 | AES-GCM nonce, fresh every time the sidecar is written |
+| 51+N | rest | Ciphertext of the 32-byte vault key, including the 16-byte GCM tag |
+
+Associated data is everything before the nonce (magic through PRF salt).
+
+The wrapping key is the PRF output. When that output is 32 bytes, use it directly as an AES-GCM key from `cryptography`. When it is not, derive 32 bytes with HKDF-SHA256 from `cryptography` and use that. Do not invent another cipher. Do not replace Argon2id for the master password.
+
+Writes are atomic (sibling `.tmp`, then replace), same rule as the vault.
+
+On every Signet save, rewrite the sidecar with the current vault key and a fresh nonce. The PRF salt stays the one from enrollment unless the user enrolls again.
+
+### 13.3 Lock
+
+A successful Hello unlock lasts 24 hours. The clock starts at that unlock and is not reset by later clicks. Sleep, lid close, and the Windows lock do not end it. Windows may still ask for the laptop PIN to show the desktop. Signet does not ask a second time during those 24 hours.
+
+The vault key stays in memory for that period. Anyone who can use the unlocked Windows session can use Signet. Quitting Signet ends the session early. When 24 hours have passed, or the user starts Signet again after quitting, the next unlock is the Hello prompt again, not the master password, as long as the sidecar still matches.
+
+A secret revealed with View is covered on sleep, on the Windows lock, on leaving the entry, and on pressing View again. Coming back within 24 hours shows the list without Hello. View asks for Hello again before showing that secret.
+
+### 13.4 Window
+
+The title is **Signet**. The palette is Ink: near-black surfaces (`#141414` window, `#1c1c1c` panels), warm off-white text (`#f3f1ea`), muted text `#9a958a`, borders `#2e2e2e`, one brass accent `#d6a25e`.
+
+After unlock the list is the working surface and takes most of the window. Each row shows the label, the username, and every tag. Secrets stay off the list. The user can filter by label, username, and tag, and sort the list. Choosing one tag shows every entry that includes it. An entry may carry several tags. A password, a personal access token, and an API key are the same kind of entry. The secret lives in `password`.
+
+Copy is on every row. It writes the secret to the clipboard and does not show it. Copy uses the unlock already done. The clipboard warning in §9 still applies.
+
+Clicking a row opens that entry in a side panel. The panel shows the label, tags, username, URL, notes, and a masked secret, plus Copy, View, Edit, and Delete. Delete is visually quieter than the others.
+
+- **View** is labeled View. It asks for Hello again, then shows the secret. The secret stays until the user selects another row, closes the panel, presses View again, the PC sleeps, or Windows locks. There is no countdown. The list never shows it. Covering the secret does not end the 24-hour unlock.
+- **Create new** replaces the side panel with a blank entry. The list stays. Fields: label, username, secret, URL, notes, tags. Generate fills the secret using the `pwm generate` defaults (20 characters, symbols on). The user may paste a secret instead. There is no step that asks whether it is a password or a token. The secret stays visible until save, then it is masked.
+- **Edit** uses those same fields, filled in. The secret stays masked unless the user presses View. Save does not ask for Hello again.
+- **Delete** asks the user to type the label. The entry is removed only when it matches. Cancel leaves the entry. Delete does not ask for Hello again.
+
+Copy, Create, Edit, and Delete do not ask for Hello again. The window is already unlocked.
+
+If no vault exists, Signet tells the user to run `pwm init`. Signet does not grow a second way to create the first vault. `pwm change-master` stays a CLI command.
+
+### 13.5 What this section does not change
+
+- §§2–7 and the PWM1 layout stay the contract for `pwm`.
+- Crypto primitives for the vault stay Argon2id and AES-GCM. Hello only unwraps a key.
+- PRF must be exercised on this machine before Signet is called done. Unit tests mock the PRF output. They must show: a missing sidecar still opens with the master, a matching sidecar round-trips the vault key, a CLI salt rotation makes the sidecar fail closed until the master is typed, and a Signet save keeps the salt and uses a fresh nonce.
+
+The window toolkit is an implementation choice. It must stay on this computer and must not open a port or a browser. Record the choice in LEARNINGS.md when it is made.
+
 Initial version: 2026-06-14  
 Updated 2026-08-16: added §7.0 landing page for bare `pwm` (PWM-R009).  
-Updated 2026-08-16: added §7.11 `pwm backup` (PWM-R007). Copies ciphertext only; no decrypt.
+Updated 2026-08-16: added §7.11 `pwm backup` (PWM-R007). Copies ciphertext only; no decrypt.  
+Updated 2026-10-28: added §13 Signet. The window uses the existing Windows Hello PIN. A PIN change in Windows needs nothing inside Signet. One Hello unlock lasts 24 hours. Launch is a Start menu shortcut, not `pwm`. No code yet.
