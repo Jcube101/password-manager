@@ -382,6 +382,127 @@ def test_activity_does_not_extend_the_clock_and_expiry_asks_hello(tmp_path, monk
         assert app._unlocked_at is None
 
 
+def test_list_scrolls_and_details_open_from_a_name(tmp_path, monkeypatch):
+    entries = [
+        Entry(id=str(index), label=f"Item {index:02d}", username="ada", password="secret", tags=["work"])
+        for index in range(30)
+    ]
+    app, _path, _info = _open_unlocked(tmp_path, monkeypatch, entries)
+    try:
+        assert app.root is not None
+        app.root.update()
+        assert app._panel is None
+        assert app._list_scroll is not None
+        assert app._list_scroll.winfo_ismapped()
+        assert app._list_canvas is not None
+        app._list_canvas.update_idletasks()
+        box = app._list_canvas.bbox("all")
+        assert box is not None
+        assert box[3] > app._list_canvas.winfo_height()
+
+        app.copy_entry("3")
+        app.root.update()
+        assert app._panel is None
+
+        app.select("4")
+        app.root.update()
+        assert app._panel is not None
+        assert any(text == "Item 04" for text in _texts(app.root))
+
+        app.toggle_details()
+        assert app._details_pinned is True
+        app.toggle_details()
+        app.root.update()
+        assert app._details_pinned is False
+        assert app._panel is None
+    finally:
+        app.close()
+
+
+def test_hello_uses_the_top_level_window_and_stays_open(tmp_path, monkeypatch):
+    import ctypes
+
+    mail = Entry(id="1", label="Mail", password="secret")
+    app, _path, _info = _open_unlocked(tmp_path, monkeypatch, [mail])
+    try:
+        assert app.root is not None
+        # Tk on Windows does not report iconbitmap() back. The big icon
+        # handle is what the taskbar scales.
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.SendMessageW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_size_t,
+            ctypes.c_void_p,
+        ]
+        user32.SendMessageW.restype = ctypes.c_void_p
+        user32.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        user32.GetAncestor.restype = ctypes.c_void_p
+        big = user32.SendMessageW(int(app.root.winfo_id()), 0x007F, 1, 0)
+        assert int(big or 0) != 0
+        app.credential_id = b"cred"
+        app.prf_salt = b"\x44" * 32
+        app.select("1")
+        app.root.update()
+        owner = int(user32.GetAncestor(int(app.root.winfo_id()), 2) or 0)
+
+        def hello(hwnd, *_args, **_kwargs):
+            assert hwnd == owner
+            assert hwnd != 0
+            assert app.root is not None
+            assert app.root.state() == "normal"
+            assert any("laptop PIN" in text for text in _texts(app.root))
+            return b"\x33" * 32
+
+        monkeypatch.setattr("pwm.signet.evaluate", hello)
+        app.view_entry("1")
+        app.root.update()
+        assert app.root.state() == "normal"
+        assert app.revealed_id == "1"
+
+        def cancel(hwnd, *_args, **_kwargs):
+            assert hwnd == owner
+            assert app.root is not None
+            assert app.root.state() == "normal"
+            raise HelloCancelled()
+
+        app.revealed_id = None
+        monkeypatch.setattr("pwm.signet.evaluate", cancel)
+        app.view_entry("1")
+        app.root.update()
+        assert app.root.state() == "normal"
+        assert app.revealed_id is None
+        assert any("cancelled" in text.casefold() for text in _texts(app.root))
+    finally:
+        app.close()
+
+
+def test_hello_wait_does_not_hide_a_viewed_secret(tmp_path, monkeypatch):
+    mail = Entry(id="1", label="Mail", password="secret")
+    app, _path, _info = _open_unlocked(tmp_path, monkeypatch, [mail])
+    try:
+        assert app.root is not None
+        app.credential_id = b"cred"
+        app.prf_salt = b"\x44" * 32
+        app.select("1")
+        app.root.update()
+
+        def hello(*_args, **_kwargs):
+            app._last_tick = time.monotonic() - 30
+            return b"\x33" * 32
+
+        monkeypatch.setattr("pwm.signet.evaluate", hello)
+        app.view_entry("1")
+        app.root.update()
+        assert app.revealed_id == "1"
+        assert any(text == "secret" for text in _texts(app.root))
+        app._watch_desktop()
+        assert app.revealed_id == "1"
+        assert app.vault_key is not None
+    finally:
+        app.close()
+
+
 def test_sleep_covers_a_revealed_secret_and_keeps_the_session(tmp_path, monkeypatch):
     mail = Entry(id="1", label="Mail", password="secret")
     app, _path, _info = _open_unlocked(tmp_path, monkeypatch, [mail])

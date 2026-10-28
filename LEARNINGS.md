@@ -6,6 +6,40 @@ Date in ISO format. Be specific enough that a future agent (or you in 6 months) 
 
 ---
 
+## 2026-10-28 — Hello must own Signet's top-level window
+
+Minimizing Signet and passing no owner made Windows Hello return at once. The status still said Signet had stepped aside, and the PIN window never appeared. Hello treats a minimized caller, or a null owner, as a cancelled prompt. `WebAuthNGetErrorName` reports that as `NotAllowedError`, which Signet already maps to cancel.
+
+The earlier "behind the window" report came from the owner handle. `winfo_id()` on a Tk root is an inner child. The prompt was owned by that child, so the real window covered it. `GetAncestor(hwnd, GA_ROOT)` is the top-level window the user sees. Signet stays visible, makes itself the foreground window, and calls `AllowSetForegroundWindow` so the Hello process may come in front. The sleep detector still marks that wait as awake.
+
+---
+
+## 2026-10-28 — The taskbar shows the seal, and Hello is not behind Signet
+
+The taskbar button was the Python logo. Signet is hosted by `pythonw.exe`. Setting a window icon changes the title bar, and Windows still groups the process with Python unless `SetCurrentProcessExplicitAppUserModelID` runs before the first window. The id is `signet.pwm.local`, the same string as the Hello relying party. Both shortcuts store that id as `System.AppUserModel.ID`, so a pinned shortcut and the running window are one button.
+
+The first seal was a hard-edged ring at 16 and 32 pixels, which is why the shortcut looked blocky. `Signet.ico` now holds 16, 32, 48, 64, 128, and 256. Each size is drawn on its own grid: a one-pixel edge, clear corners, the ink face, a brass ring lit from the upper left, and a brass diamond. A generated picture would not stay `#d6a25e`, and it would blur at 16 pixels. The window writes the same bytes into the user cache (not the vault) and sends the 256 image as the big icon. The taskbar scales whatever icon it is given, so a 32-pixel image stays soft.
+
+Windows Hello was parented to Signet's window, so the PIN dialog opened behind it. The first attempt minimized Signet and passed no owner. That made Hello return immediately, so it was reverted the same day. See the entry above.
+
+`python -m pwm.shortcut` rewrites both shortcuts and asks the shell to drop a cached icon. It does not open the window.
+
+---
+
+## 2026-10-28 — The list scrolls, the side panel is optional, and View survives Hello
+
+The first real open showed four gaps between the window and the Ink mockup.
+
+The list lived on a canvas with a mouse-wheel binding and no scrollbar. The wheel event goes to the widget under the pointer. On a row, that widget is a label, so the canvas never scrolled. A scrollbar is packed beside the list, and the wheel binding is repeated on every row.
+
+The side panel was packed on every unlock. Daily use is the list and Copy. The panel now stays closed until the user clicks an entry's name. Details, at the top of the window, pins it open. Copy does not open it. Create, Edit, and Delete open it for that task.
+
+View asked Hello, then showed the secret, then hid it. The sleep detector treats a five-second jump in `time.monotonic()` as a suspended laptop and covers a revealed secret. Typing the laptop PIN takes longer than that, and Hello blocks the window, so the jump is waiting on the prompt. The next timer tick covered the secret and the status became "Secret hidden". Signet now marks itself awake when its own Hello prompt returns. A real sleep, measured while a secret is already on screen, still covers it.
+
+Tkinter draws square widgets. The Ink mockup uses rounded chips and buttons, so those are canvas polygons. The rows are a label, username, and tag column, with a header, which is the structure of that mockup.
+
+---
+
 ## 2026-10-28 — Signet is a Start menu shortcut and a desktop shortcut
 
 Clicking Signet opens the window. Typing `pwm` still runs the command-line tool. There is no `signet` console script and no `pwm` subcommand that opens the window. A setuptools `signet.exe` would store the absolute path to `python.exe` from install time and die with `Fatal error in launcher` after the repository or `.venv` moves. The same trap is why the README tells people to call `python.exe -m pwm` instead of `pwm.exe`.

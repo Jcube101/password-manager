@@ -425,6 +425,8 @@ Signet is a local desktop window on this PC. It reads and writes the same vault 
 
 You start Signet by clicking it. The Start menu Programs folder and the desktop each have a shortcut named Signet. Both run `pythonw.exe -m pwm.signet` from the virtual environment that created them. `pythonw.exe` opens the window with no console. The shortcuts pass no vault path, so the vault is the default file from §4. Recreate them with `python -m pwm.shortcut` after that environment moves. From a terminal, `python -m pwm.signet` opens the same window. `python -m pwm` stays the command-line tool.
 
+The shortcuts and the window use one Signet seal, drawn at 16, 32, 48, 64, 128, and 256 pixels: an ink face, a brass ring, a brass diamond, and clear corners. The taskbar shows that seal. Signet sets the application id `signet.pwm.local` before the window exists. That is the same id as the Hello relying party, and both shortcuts store it. `pythonw.exe` would otherwise keep the Python logo on the taskbar.
+
 The behavior below is the contract.
 
 ### 13.1 Unlock
@@ -442,6 +444,8 @@ First trust, once:
 5. The master password is discarded from memory. It is never written to the sidecar.
 
 After that, opening Signet is the Hello prompt. Hello returns the PRF output. Signet unwraps the vault key and decrypts the vault. A cancelled or failed Hello prompt shows no entries.
+
+The PIN window is owned by Signet's top-level window, and Signet stays visible while it is open. Hello needs that window. A minimized Signet, or a call with no owner, returns without showing the PIN. Tk's own window id is an inner child, and a prompt owned by that child opens behind the window the user sees. The wait is not sleep. This is the same for the first enrollment, later unlocks, and View.
 
 Signet never learns the PIN digits, so a Windows PIN change is not something the user configures inside Signet. Windows updates its own PIN. The passkey stays. The next Hello prompt asks for the new laptop PIN, and Signet receives the same unwrap secret as before. The user does nothing in Signet. Removing the PIN, or clearing the TPM, can destroy the passkey. Signet then asks for the master password, once, to enroll again.
 
@@ -479,17 +483,17 @@ A successful Hello unlock lasts 24 hours. The clock starts at that unlock and is
 
 The vault key stays in memory for that period. Anyone who can use the unlocked Windows session can use Signet. Quitting Signet ends the session early. When 24 hours have passed, or the user starts Signet again after quitting, the next unlock is the Hello prompt again, not the master password, as long as the sidecar still matches.
 
-A secret revealed with View is covered on sleep, on the Windows lock, on leaving the entry, and on pressing View again. Coming back within 24 hours shows the list without Hello. View asks for Hello again before showing that secret.
+A secret revealed with View is covered on sleep, on the Windows lock, on leaving the entry, and on pressing View again. Coming back within 24 hours shows the list without Hello. View asks for Hello again before showing that secret. Time spent in that Hello prompt is not sleep, and it does not cover the secret when the prompt closes.
 
 ### 13.4 Window
 
 The title is **Signet**. The palette is Ink: near-black surfaces (`#141414` window, `#1c1c1c` panels), warm off-white text (`#f3f1ea`), muted text `#9a958a`, borders `#2e2e2e`, one brass accent `#d6a25e`.
 
-After unlock the list is the working surface and takes most of the window. Each row shows the label, the username, and every tag. Secrets stay off the list. The user can filter by label, username, and tag, and sort the list. Choosing one tag shows every entry that includes it. An entry may carry several tags. A password, a personal access token, and an API key are the same kind of entry. The secret lives in `password`.
+After unlock the list is the working surface. It is the whole window until the user asks for an entry. Each row shows the label, the username, and every tag. Secrets stay off the list. The list scrolls, with a scrollbar, when there are more entries than fit. The user can filter by label, username, and tag, and sort the list. Choosing one tag shows every entry that includes it. An entry may carry several tags. A password, a personal access token, and an API key are the same kind of entry. The secret lives in `password`.
 
-Copy is on every row. It writes the secret to the clipboard and does not show it. Copy uses the unlock already done. The clipboard warning in §9 still applies.
+Copy is on every row. It writes the secret to the clipboard and does not show it, and it does not open the side panel. Copy uses the unlock already done. The clipboard warning in §9 still applies.
 
-Clicking a row opens that entry in a side panel. The panel shows the label, tags, username, URL, notes, and a masked secret, plus Copy, View, Edit, and Delete. Delete is visually quieter than the others.
+The side panel stays closed during ordinary copying. Clicking an entry's name opens that entry. A Details control at the top of the window pins the panel open so it stays beside the list. Closing the panel, or turning Details off, returns to the list. The panel shows the label, tags, username, URL, notes, and a masked secret, plus Copy, View, Edit, and Delete. Delete is visually quieter than the others.
 
 - **View** is labeled View. It asks for Hello again, then shows the secret. The secret stays until the user selects another row, closes the panel, presses View again, the PC sleeps, or Windows locks. There is no countdown. The list never shows it. Covering the secret does not end the 24-hour unlock.
 - **Create new** replaces the side panel with a blank entry. The list stays. Fields: label, username, secret, URL, notes, tags. Generate fills the secret using the `pwm generate` defaults (20 characters, symbols on). The user may paste a secret instead. There is no step that asks whether it is a password or a token. The secret stays visible until save, then it is masked.
@@ -511,4 +515,4 @@ The window toolkit is an implementation choice. It must stay on this computer an
 Initial version: 2026-06-14  
 Updated 2026-08-16: added §7.0 landing page for bare `pwm` (PWM-R009).  
 Updated 2026-08-16: added §7.11 `pwm backup` (PWM-R007). Copies ciphertext only; no decrypt.  
-Updated 2026-10-28: added §13 Signet. The window uses the existing Windows Hello PIN. A PIN change in Windows needs nothing inside Signet. One Hello unlock lasts 24 hours. Launch is a Start menu shortcut, not `pwm`. The same day, Windows Hello on this PC returned a stable 32-byte PRF output (WebAuthn API 9). The sidecar format is implemented. A tkinter window shows the list, Copy, the side panel, Create, Edit, and Delete. A Signet save keeps the salt and uses a fresh nonce. A Hello unlock lasts 24 wall-clock hours, is not extended by clicks, and is not ended by sleep or the Windows lock. Quitting ends it. The Start menu Programs folder and the desktop each have a shortcut named Signet, created by `python -m pwm.shortcut`. Both run `pythonw.exe -m pwm.signet`.
+Updated 2026-10-28: added §13 Signet. The window uses the existing Windows Hello PIN. A PIN change in Windows needs nothing inside Signet. One Hello unlock lasts 24 hours. Launch is a Start menu shortcut, not `pwm`. The same day, Windows Hello on this PC returned a stable 32-byte PRF output (WebAuthn API 9). The sidecar format is implemented. A tkinter window shows the list, Copy, the side panel, Create, Edit, and Delete. A Signet save keeps the salt and uses a fresh nonce. A Hello unlock lasts 24 wall-clock hours, is not extended by clicks, and is not ended by sleep or the Windows lock. Quitting ends it. The Start menu Programs folder and the desktop each have a shortcut named Signet, created by `python -m pwm.shortcut`. Both run `pythonw.exe -m pwm.signet`. The list scrolls. The side panel opens from an entry's name, or stays open when Details is pinned. A Hello prompt for View does not count as sleep. The taskbar and the shortcuts use a Signet seal up to 256 pixels, not the Python logo. Windows Hello is owned by Signet's top-level window, so the PIN dialog opens in front of it.

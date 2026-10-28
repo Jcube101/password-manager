@@ -18,11 +18,13 @@ import ctypes
 import gc
 import json
 import os
+import sys
 import time
 import tkinter as tk
 import uuid
 from pathlib import Path
 from tkinter import font as tkfont
+from tkinter import ttk
 
 from pwm.clipboard import copy_to_clipboard
 from pwm.crypto import (
@@ -36,6 +38,7 @@ from pwm.crypto import (
 from pwm.generator import generate_password
 from pwm.hello import HelloCancelled, HelloError, enroll, evaluate
 from pwm.models import Entry, now_iso
+from pwm.shortcut import apply_window_icon, claim_app_id
 from pwm.sidecar import (
     SidecarError,
     SidecarMismatch,
@@ -59,6 +62,9 @@ BRASS_INK = "#1a140c"
 SELECTED = "#2a241c"
 MASK = "••••••••••••"
 UNLOCK_SECONDS = 24 * 60 * 60
+FILTER_HINT = "Filter labels, usernames, tags"
+HELLO_PROMPT = "Approve Windows Hello with your laptop PIN."
+HELLO_SETUP = "Approve Windows Hello to finish setup. This uses your laptop PIN."
 
 
 def session_expired(started_at: float, now: float) -> bool:
@@ -316,6 +322,14 @@ class SignetApp:
         self._filter_trace: str | None = None
         self._sort: tk.StringVar | None = None
         self._tag = "All"
+        self._details_pinned = False
+        self._details_open = False
+        self._filter_hint = False
+        self._filter_box: tk.Entry | None = None
+        self._family = "Segoe UI"
+        self._details_button: tk.Button | None = None
+        self._list_canvas: tk.Canvas | None = None
+        self._list_scroll: ttk.Scrollbar | None = None
         self._last_tick = time.monotonic()
         self._unlocked_at: float | None = None
         self._expiring = False
@@ -349,32 +363,50 @@ class SignetApp:
                 "laptop PIN you already use to sign in. The password is not saved."
             )
             return
-        self._set_status("Approve Windows Hello with your laptop PIN.")
+        self._set_status(HELLO_PROMPT)
         self.root.after(200, self.hello_unlock)
 
-    def hwnd(self) -> int:
-        assert self.root is not None
-        self.root.update_idletasks()
-        return int(self.root.winfo_id())
-
     def _build(self) -> None:
+        # Before the first window. After that, Windows has already grouped
+        # this process with pythonw and the taskbar keeps the Python logo.
+        claim_app_id()
         root = _open_root()
         root.title("Signet")
         root.configure(bg=BG)
+        apply_window_icon(root)
         root.geometry("980x640")
         root.minsize(760, 480)
         root.protocol("WM_DELETE_WINDOW", self.close)
         family = "Segoe UI" if "Segoe UI" in tkfont.families() else "TkDefaultFont"
+        self._family = family
         root.option_add("*Font", (family, 10))
         self.root = root
         self._filter = tk.StringVar(master=root)
         self._sort = tk.StringVar(master=root, value="Label")
+        self._install_scroll_style(root)
 
         header = tk.Frame(root, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
         header.pack(fill="x")
         tk.Label(header, text="Signet", bg=PANEL, fg=TEXT, font=(family, 14, "bold")).pack(
-            anchor="w", padx=16, pady=10
+            side="left", padx=16, pady=10
         )
+        self._details_button = tk.Button(
+            header,
+            text="Details",
+            command=self.toggle_details,
+            bg=PANEL,
+            fg=MUTED,
+            activebackground="#2a2a2a",
+            activeforeground=TEXT,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            padx=12,
+            pady=4,
+            cursor="hand2",
+        )
+        self._details_button.pack(side="right", padx=16, pady=8)
+        self._sync_details_button()
 
         self.body = tk.Frame(root, bg=BG)
         self.body.pack(fill="both", expand=True)
@@ -411,6 +443,8 @@ class SignetApp:
         self.master_entry = None
         self.error_label = None
         self._list_inner = None
+        self._list_canvas = None
+        self._list_scroll = None
         self._secret_value = None
         self._panel = None
         self._forget_form()
@@ -418,6 +452,151 @@ class SignetApp:
     def _set_status(self, text: str) -> None:
         if self.status is not None:
             self.status.configure(text=text)
+
+    def _panel_wanted(self) -> bool:
+        """The side panel stays closed until a name is clicked or Details is pinned."""
+        return self._details_pinned or self._details_open or self._mode in {"create", "edit", "delete"}
+
+    def _mark_awake(self) -> None:
+        """Forget the gap while this window was waiting. That gap is not sleep."""
+        self._last_tick = time.monotonic()
+
+    def _owner_hwnd(self) -> int:
+        """The top-level window Hello should own.
+
+        ``winfo_id()`` is an inner Tk child. A prompt owned by that child
+        opens behind the window the user sees. No owner at all, or a
+        minimized window, makes Hello return without showing the PIN.
+        """
+        assert self.root is not None
+        self.root.update_idletasks()
+        inner = int(self.root.winfo_id())
+        if sys.platform != "win32":
+            return inner
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        user32.GetAncestor.restype = ctypes.c_void_p
+        root = user32.GetAncestor(inner, 2)  # GA_ROOT
+        return int(root or inner)
+
+    def _ask_hello(self, call):
+        """Ask Windows Hello while this window stays up, in front of Signet.
+
+        Signet is the foreground window when the call starts, and it allows
+        the Hello process to take the foreground. The wait is not sleep.
+        """
+        assert self.root is not None
+        hwnd = self._owner_hwnd()
+        if sys.platform == "win32":
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+            user32.SetForegroundWindow.restype = ctypes.c_int
+            user32.AllowSetForegroundWindow.argtypes = [ctypes.c_uint32]
+            user32.AllowSetForegroundWindow.restype = ctypes.c_int
+            user32.SetForegroundWindow(hwnd)
+            # ASFW_ANY. Hello runs in another process and needs this permission.
+            user32.AllowSetForegroundWindow(0xFFFFFFFF)
+        try:
+            return call(hwnd)
+        finally:
+            self._mark_awake()
+
+    def toggle_details(self) -> None:
+        """Pin the side panel open, or return to the list."""
+        if self.vault_key is None or self._list_inner is None:
+            return
+        self._details_pinned = not self._details_pinned
+        self._details_open = self._details_pinned
+        if not self._details_pinned:
+            self._mode = "entry"
+            self._form_shown = False
+            self.revealed_id = None
+        self._sync_details_button()
+        self.show_list()
+
+    def close_details(self) -> None:
+        if self._details_pinned:
+            return
+        self._details_open = False
+        self._mode = "entry"
+        self._form_shown = False
+        self.revealed_id = None
+        self._later(self.show_list)
+
+    def _sync_details_button(self) -> None:
+        button = self._details_button
+        if button is None:
+            return
+        if self._details_pinned:
+            button.configure(text="Details on", bg=BRASS, fg=BRASS_INK, activebackground="#e0b56e")
+        else:
+            button.configure(text="Details", bg=PANEL, fg=MUTED, activebackground="#2a2a2a")
+
+    def _install_scroll_style(self, root: tk.Tk) -> None:
+        style = ttk.Style(root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            return
+        style.configure(
+            "Signet.Vertical.TScrollbar",
+            gripcount=0,
+            background=BORDER,
+            darkcolor=BORDER,
+            lightcolor=BORDER,
+            troughcolor=BG,
+            bordercolor=BG,
+            arrowcolor=MUTED,
+            relief="flat",
+            width=12,
+        )
+        style.map("Signet.Vertical.TScrollbar", background=[("active", "#3a3a3a")])
+
+    def _show_filter_text(self) -> None:
+        box = self._filter_box
+        if box is None or self._filter is None:
+            return
+        box.delete(0, "end")
+        query = self._filter.get()
+        if query:
+            self._filter_hint = False
+            box.configure(fg=TEXT)
+            box.insert(0, query)
+            return
+        self._filter_hint = True
+        box.configure(fg=MUTED)
+        box.insert(0, FILTER_HINT)
+
+    def _filter_focus_in(self, _event) -> None:
+        box = self._filter_box
+        if box is None or not self._filter_hint:
+            return
+        self._filter_hint = False
+        box.delete(0, "end")
+        box.configure(fg=TEXT)
+
+    def _filter_focus_out(self, _event) -> None:
+        box = self._filter_box
+        if box is None or box.get().strip():
+            return
+        if self._filter is not None and self._filter.get():
+            self._filter.set("")
+        self._show_filter_text()
+
+    def _filter_typed(self, _event) -> None:
+        if self._filter is None or self._filter_box is None or self._filter_hint:
+            return
+        self._filter.set(self._filter_box.get())
+
+    def _on_list_wheel(self, event) -> str:
+        if self._list_canvas is not None:
+            self._list_canvas.yview_scroll(int(-event.delta / 120), "units")
+        return "break"
+
+    def _bind_list_wheel(self, widget: tk.Misc) -> None:
+        widget.bind("<MouseWheel>", self._on_list_wheel)
+        for child in widget.winfo_children():
+            self._bind_list_wheel(child)
 
     def show_no_vault(self) -> None:
         self._clear_body()
@@ -484,6 +663,7 @@ class SignetApp:
         ).pack(anchor="w")
         _button(wrap, "Try Hello again", self.hello_unlock, primary=True).pack(anchor="w", pady=(16, 8))
         _button(wrap, "Use master password", self._use_master).pack(anchor="w")
+        self._set_status("Hello was cancelled. No entries are shown.")
 
     def _use_master(self) -> None:
         self.show_master(
@@ -539,10 +719,10 @@ class SignetApp:
         if side is not None:
             try:
                 parsed = parse_sidecar(side)
-                self._set_status("Approve Windows Hello with your laptop PIN.")
-                assert self.root is not None
-                self.root.update_idletasks()
-                prf = evaluate(self.hwnd(), parsed.credential_id, parsed.prf_salt)
+                self._set_status(HELLO_PROMPT)
+                prf = self._ask_hello(
+                    lambda hwnd: evaluate(hwnd, parsed.credential_id, parsed.prf_salt)
+                )
                 try:
                     held = bytes(prf)
                     refreshed = rewrite_sidecar(side, key, prf)
@@ -563,11 +743,9 @@ class SignetApp:
                 pass
 
         prf_salt = os.urandom(32)
-        self._set_status("Approve Windows Hello to finish setup. This uses your laptop PIN.")
-        assert self.root is not None
-        self.root.update_idletasks()
+        self._set_status(HELLO_SETUP)
         try:
-            credential_id, prf = enroll(self.hwnd(), prf_salt)
+            credential_id, prf = self._ask_hello(lambda hwnd: enroll(hwnd, prf_salt))
             try:
                 held = bytes(prf)
                 blob = build_sidecar(
@@ -601,10 +779,10 @@ class SignetApp:
             return
         try:
             parsed = parse_sidecar(side)
-            self._set_status("Approve Windows Hello with your laptop PIN.")
-            assert self.root is not None
-            self.root.update_idletasks()
-            prf = evaluate(self.hwnd(), parsed.credential_id, parsed.prf_salt)
+            self._set_status(HELLO_PROMPT)
+            prf = self._ask_hello(
+                lambda hwnd: evaluate(hwnd, parsed.credential_id, parsed.prf_salt)
+            )
             try:
                 blob = self.vault_path.read_bytes()
                 plaintext = open_with_sidecar(blob, side, prf)
@@ -648,63 +826,96 @@ class SignetApp:
         self._tag = "All"
         self.show_list()
 
-    def show_list(self) -> None:
+    def show_list(self, *, status: str | None = None) -> None:
         self._clear_body()
         assert self.body is not None
         list_side = tk.Frame(self.body, bg=BG)
         list_side.pack(side="left", fill="both", expand=True)
-        self._panel = tk.Frame(self.body, bg=PANEL, width=320)
-        self._panel.pack(side="right", fill="y")
-        self._panel.pack_propagate(False)
+        if self._panel_wanted():
+            self._panel = tk.Frame(self.body, bg=PANEL, width=340, highlightthickness=1, highlightbackground=BORDER)
+            self._panel.pack(side="right", fill="y")
+            self._panel.pack_propagate(False)
+        else:
+            self._panel = None
 
         tools = tk.Frame(list_side, bg=BG)
         tools.pack(fill="x", padx=16, pady=(16, 8))
         assert self._filter is not None and self._sort is not None
-        filter_box = tk.Entry(
+        self._filter_box = tk.Entry(
             tools,
-            textvariable=self._filter,
             bg=PANEL,
-            fg=TEXT,
+            fg=MUTED if self._filter_hint or not self._filter.get() else TEXT,
             insertbackground=TEXT,
             relief="flat",
             highlightthickness=1,
             highlightbackground=BORDER,
             highlightcolor=BRASS,
         )
-        filter_box.pack(side="left", fill="x", expand=True, ipady=6)
+        self._filter_box.pack(side="left", fill="x", expand=True, ipady=7, padx=(0, 8))
+        self._show_filter_text()
+        self._filter_box.bind("<FocusIn>", self._filter_focus_in)
+        self._filter_box.bind("<FocusOut>", self._filter_focus_out)
+        self._filter_box.bind("<KeyRelease>", self._filter_typed)
         if self._filter_trace is not None:
             self._filter.trace_remove("write", self._filter_trace)
         self._filter_trace = self._filter.trace_add("write", lambda *_args: self.refresh_rows())
         _button(tools, "Create new", self.start_create, primary=True).pack(side="right", padx=(8, 0))
         sort = tk.OptionMenu(tools, self._sort, "Label", "Username", command=lambda _value: self.refresh_rows())
-        sort.configure(bg=PANEL, fg=MUTED, activebackground=PANEL, relief="flat", highlightthickness=0)
-        sort.pack(side="right", padx=(8, 0))
+        sort.configure(
+            bg=PANEL,
+            fg=MUTED,
+            activebackground=PANEL,
+            activeforeground=TEXT,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            font=(self._family, 10),
+        )
+        sort.pack(side="right", padx=(8, 0), ipady=4)
 
         self._tags = tk.Frame(list_side, bg=BG)
-        self._tags.pack(fill="x", padx=16, pady=(0, 8))
+        self._tags.pack(fill="x", padx=16, pady=(4, 10))
 
-        canvas = tk.Canvas(list_side, bg=BG, highlightthickness=0)
-        canvas.pack(fill="both", expand=True, padx=16, pady=(0, 8))
-        self._list_inner = tk.Frame(canvas, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
-        window = canvas.create_window((0, 0), window=self._list_inner, anchor="nw")
-        self._list_inner.bind(
-            "<Configure>",
-            lambda _event: canvas.configure(scrollregion=canvas.bbox("all")),
+        list_wrap = tk.Frame(list_side, bg=BG)
+        list_wrap.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+        self._list_scroll = ttk.Scrollbar(list_wrap, orient="vertical", style="Signet.Vertical.TScrollbar")
+        self._list_canvas = tk.Canvas(
+            list_wrap,
+            bg=BG,
+            highlightthickness=0,
+            bd=0,
+            yscrollcommand=self._list_scroll.set,
         )
-        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
-        canvas.bind("<MouseWheel>", lambda event: canvas.yview_scroll(int(-event.delta / 120), "units"))
+        self._list_scroll.configure(command=self._list_canvas.yview)
+        self._list_scroll.pack(side="right", fill="y", padx=(8, 0))
+        self._list_canvas.pack(side="left", fill="both", expand=True)
+        self._list_inner = tk.Frame(self._list_canvas, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        window = self._list_canvas.create_window((0, 0), window=self._list_inner, anchor="nw")
+
+        def _fit_inner(_event, canvas=self._list_canvas) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _fit_width(event, canvas=self._list_canvas, item=window) -> None:
+            canvas.itemconfigure(item, width=event.width)
+
+        self._list_inner.bind("<Configure>", _fit_inner)
+        self._list_canvas.bind("<Configure>", _fit_width)
+        self._list_canvas.bind("<MouseWheel>", self._on_list_wheel)
+        self._list_scroll.bind("<MouseWheel>", self._on_list_wheel)
 
         tk.Label(
             list_side,
             text="Copy leaves the secret on the clipboard. Other apps and Win+V can read it.",
             bg=BG,
             fg=MUTED,
-            wraplength=560,
+            wraplength=640,
             justify="left",
         ).pack(anchor="w", padx=16, pady=(0, 12))
 
         self.refresh_rows()
-        self._set_status(f"{len(self.entries)} entries")
+        if self._panel is not None and self._mode != "entry":
+            self._render_panel()
+        self._set_status(status if status is not None else f"{len(self.entries)} entries")
 
     def refresh_rows(self) -> None:
         if self._list_inner is None:
@@ -720,16 +931,37 @@ class SignetApp:
             filter_entries(self.entries, self._filter.get(), self._tag),
             self._sort.get(),
         )
-        if self._mode == "entry" and self.selected_id not in {entry.id for entry in visible}:
+        if (
+            self._mode == "entry"
+            and self._panel_wanted()
+            and self.selected_id not in {entry.id for entry in visible}
+        ):
             self.selected_id = visible[0].id if visible else None
             self.revealed_id = None
+        head = tk.Frame(self._list_inner, bg=PANEL)
+        head.pack(fill="x")
+        for column, caption in enumerate(("Label", "Username", "Tags")):
+            tk.Label(
+                head,
+                text=caption.upper(),
+                bg=PANEL,
+                fg=MUTED,
+                anchor="w",
+                font=(self._family, 8),
+            ).grid(row=0, column=column, sticky="ew", padx=12, pady=(8, 6))
+            head.grid_columnconfigure(column, weight=1, uniform="head")
         if not visible:
             tk.Label(self._list_inner, text="No matching entries", bg=PANEL, fg=MUTED).pack(
                 anchor="w", padx=12, pady=12
             )
         for entry in visible:
+            tk.Frame(self._list_inner, bg=BORDER, height=1).pack(fill="x")
             self._render_row(entry)
-        if self._mode == "entry":
+        if self._list_canvas is not None and self._list_inner is not None:
+            self._bind_list_wheel(self._list_inner)
+            self._list_inner.update_idletasks()
+            self._list_canvas.configure(scrollregion=self._list_canvas.bbox("all"))
+        if self._panel is not None and self._mode == "entry":
             self._render_panel()
 
     def _render_tags(self) -> None:
@@ -737,59 +969,105 @@ class SignetApp:
         for child in self._tags.winfo_children():
             child.destroy()
         tags = sorted({tag for entry in self.entries for tag in entry.tags})
-        self._chip(self._tags, "All", self._tag == "All", lambda: self._choose_tag("All"))
+        self._chip(self._tags, "All", lambda: self._choose_tag("All"), filled=self._tag == "All")
         for tag in tags:
-            self._chip(self._tags, tag, self._tag == tag, lambda name=tag: self._choose_tag(name))
+            self._chip(
+                self._tags,
+                tag,
+                lambda name=tag: self._choose_tag(name),
+                filled=self._tag == tag,
+            )
 
     def _choose_tag(self, tag: str) -> None:
         self._tag = tag
         if self.root is not None:
             self.root.after_idle(self.refresh_rows)
 
-    def _chip(self, parent: tk.Frame, text: str, selected: bool, command) -> None:
-        label = tk.Label(
+    def _chip(self, parent: tk.Frame, text: str, command, *, filled: bool = False, hot: bool = False) -> None:
+        if filled:
+            fill, ink, outline = BRASS, BRASS_INK, BRASS
+        elif hot:
+            fill, ink, outline = SELECTED, BRASS, BRASS
+        else:
+            fill, ink, outline = parent.cget("bg"), MUTED, BORDER
+        width = max(44, 8 * len(text) + 22)
+        height = 22
+        canvas = tk.Canvas(
             parent,
-            text=text,
-            bg=BRASS if selected else BG,
-            fg=BRASS_INK if selected else MUTED,
-            padx=8,
-            pady=2,
+            width=width,
+            height=height,
+            bg=parent.cget("bg"),
+            highlightthickness=0,
+            bd=0,
             cursor="hand2",
         )
-        label.pack(side="left", padx=(0, 6))
-        label.bind("<Button-1>", lambda _event: command())
+        canvas.pack(side="left", padx=(0, 6), pady=2)
+        _round_rect(canvas, 1, 1, width - 1, height - 1, 11, fill=fill, outline=outline)
+        canvas.create_text(width / 2, height / 2, text=text, fill=ink, font=(self._family, 9))
+        canvas.bind("<Button-1>", lambda _event: command())
 
     def _render_row(self, entry: Entry) -> None:
         assert self._list_inner is not None
-        selected = entry.id == self.selected_id
-        row = tk.Frame(self._list_inner, bg=SELECTED if selected else PANEL)
+        selected = entry.id == self.selected_id and self._panel_wanted()
+        bg = SELECTED if selected else PANEL
+        row = tk.Frame(self._list_inner, bg=bg)
         row.pack(fill="x")
-        text_side = tk.Frame(row, bg=row.cget("bg"))
-        text_side.pack(side="left", fill="x", expand=True, padx=10, pady=8)
-        tk.Label(text_side, text=entry.label, bg=row.cget("bg"), fg=BRASS if selected else TEXT).pack(anchor="w")
-        tk.Label(text_side, text=entry.username or "", bg=row.cget("bg"), fg=MUTED).pack(anchor="w")
-        if entry.tags:
-            tk.Label(text_side, text="  ".join(entry.tags), bg=row.cget("bg"), fg=MUTED).pack(anchor="w")
-        copy = _button(row, "Copy", lambda entry_id=entry.id: self.copy_entry(entry_id), primary=True)
-        copy.pack(side="right", padx=10, pady=8)
+        for column in range(3):
+            row.grid_columnconfigure(column, weight=1, uniform="row")
 
-        def select(_event, entry_id=entry.id) -> None:
+        def open_entry(_event=None, entry_id=entry.id) -> None:
             self.select(entry_id)
 
-        row.bind("<Button-1>", select)
-        text_side.bind("<Button-1>", select)
-        for child in text_side.winfo_children():
-            child.bind("<Button-1>", select)
+        label = tk.Label(
+            row,
+            text=entry.label,
+            bg=bg,
+            fg=BRASS if selected else TEXT,
+            anchor="w",
+            cursor="hand2",
+            font=(self._family, 11),
+        )
+        label.grid(row=0, column=0, sticky="ew", padx=(12, 8), pady=10)
+        username = tk.Label(
+            row,
+            text=entry.username or "—",
+            bg=bg,
+            fg=MUTED,
+            anchor="w",
+            cursor="hand2",
+        )
+        username.grid(row=0, column=1, sticky="ew", padx=8, pady=10)
+        tags = tk.Frame(row, bg=bg, cursor="hand2")
+        tags.grid(row=0, column=2, sticky="w", padx=8, pady=6)
+        if entry.tags:
+            for tag in entry.tags:
+                self._chip(
+                    tags,
+                    tag,
+                    lambda entry_id=entry.id: self.select(entry_id),
+                    hot=selected,
+                )
+        else:
+            tk.Label(tags, text="—", bg=bg, fg=MUTED, cursor="hand2").pack(side="left")
+        _button(row, "Copy", lambda entry_id=entry.id: self.copy_entry(entry_id), primary=True).grid(
+            row=0, column=3, padx=(8, 12), pady=8
+        )
+        for widget in (row, label, username, tags):
+            widget.bind("<Button-1>", open_entry)
 
     def select(self, entry_id: str) -> None:
         if not self._ensure_unlocked():
             return
         if entry_id != self.revealed_id:
             self.revealed_id = None
+        opening = self._panel is None
         self.selected_id = entry_id
         self._mode = "entry"
         self._form_shown = False
-        if self.root is not None:
+        self._details_open = True
+        if opening:
+            self._later(self.show_list)
+        elif self.root is not None:
             self.root.after_idle(self.refresh_rows)
 
     def _selected(self) -> Entry | None:
@@ -830,13 +1108,20 @@ class SignetApp:
         entry = self._selected()
         pad = tk.Frame(self._panel, bg=PANEL)
         pad.pack(fill="both", expand=True, padx=18, pady=18)
-        tk.Label(pad, text="OPEN ENTRY", bg=PANEL, fg=MUTED).pack(anchor="w")
+        title_row = tk.Frame(pad, bg=PANEL)
+        title_row.pack(fill="x")
+        tk.Label(title_row, text="OPEN ENTRY", bg=PANEL, fg=MUTED).pack(side="left")
+        if not self._details_pinned:
+            _button(title_row, "Close", self.close_details, quiet=True).pack(side="right")
         if entry is None:
             tk.Label(pad, text="Select an entry", bg=PANEL, fg=TEXT).pack(anchor="w", pady=(12, 0))
             return
         tk.Label(pad, text=entry.label, bg=PANEL, fg=TEXT, font=("Segoe UI", 16, "bold")).pack(anchor="w", pady=(4, 8))
         if entry.tags:
-            tk.Label(pad, text="  ".join(entry.tags), bg=PANEL, fg=BRASS).pack(anchor="w", pady=(0, 12))
+            tag_row = tk.Frame(pad, bg=PANEL)
+            tag_row.pack(anchor="w", pady=(0, 12))
+            for tag in entry.tags:
+                self._chip(tag_row, tag, lambda: None, hot=True)
         self._field(pad, "Username", entry.username or "—")
         self._field(pad, "URL", entry.url or "—")
         shown = entry.password if self.revealed_id == entry.id else MASK
@@ -854,7 +1139,11 @@ class SignetApp:
             return
         self._mode = "create"
         self.revealed_id = None
-        self._later(self._render_panel)
+        self._details_open = True
+        if self._panel is None:
+            self._later(self.show_list)
+        else:
+            self._later(self._render_panel)
 
     def start_edit(self) -> None:
         if not self._ensure_unlocked():
@@ -862,7 +1151,11 @@ class SignetApp:
         if self._selected() is None:
             return
         self._mode = "edit"
-        self._later(self._render_panel)
+        self._details_open = True
+        if self._panel is None:
+            self._later(self.show_list)
+        else:
+            self._later(self._render_panel)
 
     def start_delete(self) -> None:
         if not self._ensure_unlocked():
@@ -872,12 +1165,20 @@ class SignetApp:
         self._mode = "delete"
         self.revealed_id = None
         self._form_shown = False
-        self._later(self._render_panel)
+        self._details_open = True
+        if self._panel is None:
+            self._later(self.show_list)
+        else:
+            self._later(self._render_panel)
 
     def cancel_form(self) -> None:
         self._mode = "entry"
         self._form_shown = False
-        self._later(self._render_panel)
+        if not self._details_pinned:
+            self._details_open = False
+            self._later(self.show_list)
+        else:
+            self._later(self._render_panel)
 
     def _later(self, callback) -> None:
         """Run after the click returns, so Tk is not destroying the clicked widget."""
@@ -1170,11 +1471,11 @@ class SignetApp:
         if self.credential_id is None or self.prf_salt is None:
             self._set_status("View needs Windows Hello, and this window has no passkey yet.")
             return False
-        self._set_status("Approve Windows Hello to view this secret.")
-        assert self.root is not None
-        self.root.update_idletasks()
+        self._set_status(HELLO_PROMPT)
         try:
-            prf = evaluate(self.hwnd(), self.credential_id, self.prf_salt)
+            prf = self._ask_hello(
+                lambda hwnd: evaluate(hwnd, self.credential_id, self.prf_salt)
+            )
             try:
                 side = read_sidecar(self.vault_path)
                 if side is None:
@@ -1188,6 +1489,11 @@ class SignetApp:
         except (HelloError, SidecarError, OSError):
             self._set_status("Windows Hello did not show the secret.")
             return False
+        finally:
+            # Hello blocks this window. A 10-digit PIN takes longer than the
+            # sleep detector's five seconds, and that detector would hide the
+            # secret the moment the prompt closed.
+            self._mark_awake()
         return True
 
     def _session_is_over(self) -> bool:
@@ -1281,36 +1587,46 @@ def _open_root() -> tk.Tk:
     raise last
 
 
-def _button(parent: tk.Misc, text: str, command, primary: bool = False, quiet: bool = False) -> tk.Button:
+def _round_rect(canvas: tk.Canvas, x1: float, y1: float, x2: float, y2: float, radius: float, **kwargs):
+    radius = min(radius, (x2 - x1) / 2, (y2 - y1) / 2)
+    points = [
+        x1 + radius, y1,
+        x2 - radius, y1,
+        x2, y1,
+        x2, y1 + radius,
+        x2, y2 - radius,
+        x2, y2,
+        x2 - radius, y2,
+        x1 + radius, y2,
+        x1, y2,
+        x1, y2 - radius,
+        x1, y1 + radius,
+        x1, y1,
+    ]
+    return canvas.create_polygon(points, smooth=True, **kwargs)
+
+
+def _button(parent: tk.Misc, text: str, command, primary: bool = False, quiet: bool = False) -> tk.Canvas:
+    """A brass or ink button with rounded corners. Tk itself draws square corners."""
     if primary:
-        return tk.Button(
-            parent,
-            text=text,
-            command=command,
-            bg=BRASS,
-            fg=BRASS_INK,
-            activebackground="#e0b56e",
-            activeforeground=BRASS_INK,
-            relief="flat",
-            padx=12,
-            pady=4,
-            cursor="hand2",
-        )
-    return tk.Button(
+        fill, ink, outline = BRASS, BRASS_INK, BRASS
+    else:
+        fill, ink, outline = PANEL, (MUTED if quiet else TEXT), BORDER
+    width = max(72, 8 * len(text) + 28)
+    height = 32
+    canvas = tk.Canvas(
         parent,
-        text=text,
-        command=command,
-        bg=PANEL,
-        fg=MUTED if quiet else TEXT,
-        activebackground="#2a2a2a",
-        activeforeground=MUTED if quiet else TEXT,
-        relief="flat",
-        highlightthickness=1,
-        highlightbackground=BORDER,
-        padx=12,
-        pady=4,
+        width=width,
+        height=height,
+        bg=parent.cget("bg"),
+        highlightthickness=0,
+        bd=0,
         cursor="hand2",
     )
+    _round_rect(canvas, 1, 1, width - 1, height - 1, 8, fill=fill, outline=outline)
+    canvas.create_text(width / 2, height / 2, text=text, fill=ink, font=("Segoe UI", 10))
+    canvas.bind("<Button-1>", lambda _event: command())
+    return canvas
 
 
 def main(argv: list[str] | None = None) -> None:

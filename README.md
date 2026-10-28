@@ -101,6 +101,8 @@ Create or refresh those two shortcuts from this repository:
 
 Each shortcut runs `pythonw.exe -m pwm.signet` from this virtual environment, so the window opens with no console. The shortcut stores that path. After you move the repository or recreate `.venv`, run the command again. From a terminal, `python -m pwm.signet` opens the same window.
 
+The shortcut and the taskbar use a Signet seal, not the Python logo. Run the command above again after an update so Windows picks up a new icon. Quit Signet and open it again to see it. When Signet asks for the laptop PIN, Windows Hello opens in front of this window.
+
 ## Daily command cheat sheet
 
 Every command that reads or writes secrets will prompt `Master password:` and show a spinner while Argon2 runs. `generate` and `info` do **not** need the vault.
